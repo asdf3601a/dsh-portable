@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build + smoke (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve dsh version (npm latest / fallback)
+        id: ver
+        shell: pwsh
+        run: |
+          $fallback = $null
+          foreach ($line in Get-Content versions.env) {
+            if ($line -match '^DSH_VERSION_FALLBACK=(.+)$') { $fallback = $Matches[1]; break }
+          }
+          try {
+            $latest = (Invoke-RestMethod https://registry.npmjs.org/@deepseek-ai/dsh/latest).version
+          } catch {
+            $latest = $fallback
+          }
+          if (-not $latest) { $latest = $fallback }
+          Write-Host "Using DSH_VERSION=$latest"
+          "dsh_version=$latest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build portable ZIP
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -DshVersion '${{ steps.ver.outputs.dsh_version }}'
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          ./scripts/smoke-windows.ps1 `
+            -StageDir ./build/win-x64/dsh-portable `
+            -ExpectedDshVersion '${{ steps.ver.outputs.dsh_version }}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-portable-win-x64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

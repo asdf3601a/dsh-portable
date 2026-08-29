@@ -1,0 +1,22 @@
+dsh-portable — unofficial community packager
+============================================
+
+This project is NOT affiliated with, endorsed by, or sponsored by DeepSeek.
+
+It redistributes, without modification:
+
+  • @deepseek-ai/dsh          MIT License — https://github.com/deepseek-ai/deepseek-harness
+  • Node.js                   Node.js license — https://github.com/nodejs/node/blob/main/LICENSE
+  • pnpm                      MIT License — https://github.com/pnpm/pnpm
+
+DeepSeek, DeepSeek Harness, and related marks belong to their respective owners.
+
+The launcher scripts and packaging glue in this repository are MIT-licensed
+(see LICENSE).
+
+Security note
+-------------
+DeepSeek Harness can execute local commands and edit files in the chosen
+workspace. Only use trusted models, plugins, and projects. The local Web UI
+binds to 127.0.0.1 by default. The data\dsh-home folder may contain API keys
+and private sessions — treat it as sensitive.

@@ -1,0 +1,125 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: '@deepseek-ai/dsh version to package (npm)'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      dsh_version:
+        description: '@deepseek-ai/dsh version to package (npm)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, smoke, publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify npm package exists
+        shell: pwsh
+        run: |
+          $ver = '${{ inputs.dsh_version }}'
+          if (-not $ver) { throw 'dsh_version input is required' }
+          try {
+            $got = (Invoke-RestMethod "https://registry.npmjs.org/@deepseek-ai/dsh/$ver").version
+          } catch {
+            throw "@deepseek-ai/dsh@$ver is not on npm yet"
+          }
+          if ($got -ne $ver) { throw "npm returned '$got' for requested '$ver'" }
+          Write-Host "npm OK: @deepseek-ai/dsh@$got"
+
+      - name: Skip if release asset already exists
+        id: gate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ inputs.dsh_version }}'
+          $tag = "dsh-v$ver"
+          $asset = "dsh-portable-$ver-win-x64.zip"
+          $exists = $false
+          try {
+            $rel = gh release view $tag --json assets 2>$null | ConvertFrom-Json
+            if ($rel.assets | Where-Object { $_.name -eq $asset }) { $exists = $true }
+          } catch {
+            $exists = $false
+          }
+          if ($exists) {
+            Write-Host "Release $tag already has $asset — skipping build"
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Build portable ZIP
+        if: steps.gate.outputs.skip != 'true'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -DshVersion '${{ inputs.dsh_version }}'
+
+      - name: Smoke test
+        if: steps.gate.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          ./scripts/smoke-windows.ps1 `
+            -StageDir ./build/win-x64/dsh-portable `
+            -ExpectedDshVersion '${{ inputs.dsh_version }}'
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          name: dsh-portable-${{ inputs.dsh_version }}-win-x64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.gate.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ inputs.dsh_version }}'
+          $tag = "dsh-v$ver"
+          $zip = Get-ChildItem dist/dsh-portable-*-win-x64.zip | Select-Object -First 1
+          $sums = Get-Item dist/SHA256SUMS.txt
+          $node = $null; $pnpm = $null
+          foreach ($line in Get-Content versions.env) {
+            if ($line -match '^NODE_VERSION=(.+)$') { $node = $Matches[1] }
+            if ($line -match '^PNPM_VERSION=(.+)$') { $pnpm = $Matches[1] }
+          }
+
+          $notes = @"
+          Unofficial Windows 11 x64 portable build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ``dsh@$ver``.
+
+          **Not affiliated with DeepSeek.** Bundles unmodified ``@deepseek-ai/dsh``, official Node.js v$node, and pnpm v$pnpm.
+
+          Upstream tag: https://github.com/deepseek-ai/deepseek-harness/releases/tag/$tag
+
+          ### Use
+          1. Unzip ``$($zip.Name)``
+          2. Double-click ``start.cmd``
+          3. Open http://127.0.0.1:3080
+
+          Persistent data stays in ``data\`` (not ``%USERPROFILE%\.dsh``). Temp files use the system TEMP by default.
+
+          Builds are unsigned — SmartScreen may require **More info → Run anyway**.
+          Verify with ``SHA256SUMS.txt``.
+          "@
+
+          $notesFile = 'dist/release-notes.md'
+          Set-Content -Path $notesFile -Value $notes -Encoding utf8
+
+          gh release create $tag $zip.FullName $sums.FullName `
+            --title "dsh-portable $ver (win-x64)" `
+            --notes-file $notesFile `
+            --latest=false

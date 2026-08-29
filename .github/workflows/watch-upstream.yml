@@ -1,0 +1,43 @@
+name: watch-upstream
+
+on:
+  schedule:
+    # GitHub cron can drift; this is best-effort near-real-time following.
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  detect:
+    name: Detect unpublished upstream dsh-v* tags
+    runs-on: ubuntu-latest
+    outputs:
+      has_pending: ${{ steps.resolve.outputs.has_pending }}
+      versions_json: ${{ steps.resolve.outputs.versions_json }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve pending upstream versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          ./scripts/resolve-upstream.ps1 -ThisRepo $env:GITHUB_REPOSITORY
+
+  publish:
+    name: Publish ${{ matrix.dsh_version }}
+    needs: detect
+    if: needs.detect.outputs.has_pending == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        dsh_version: ${{ fromJSON(needs.detect.outputs.versions_json) }}
+    uses: ./.github/workflows/release.yml
+    with:
+      dsh_version: ${{ matrix.dsh_version }}
+    secrets: inherit

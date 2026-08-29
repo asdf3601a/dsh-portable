@@ -1,0 +1,16 @@
+# Build outputs
+build/
+dist/
+*.zip
+SHA256SUMS.txt
+
+# Local portable data (never commit user credentials / sessions)
+data/
+packaging/data/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
