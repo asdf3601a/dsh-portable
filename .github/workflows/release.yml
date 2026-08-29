@@ -40,7 +40,9 @@ jobs:
           $requiredAssets = @("dsh-portable-$ver-win-x64.zip", 'SHA256SUMS.txt')
           $exists = $false
           $raw = gh release view $tag --json assets 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseLookupExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($releaseLookupExitCode -eq 0) {
             $rel = $raw | ConvertFrom-Json
             $assetNames = @($rel.assets | ForEach-Object { $_.name })
             $exists = @($requiredAssets | Where-Object { $_ -notin $assetNames }).Count -eq 0
