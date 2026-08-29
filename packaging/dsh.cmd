@@ -4,8 +4,22 @@ setlocal EnableExtensions
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
+set "DSH_PORTABLE_ROOT=%ROOT%"
 set "DSH_HOME=%ROOT%\data\dsh-home"
-set "PATH=%ROOT%\runtime\node;%ROOT%\runtime\pnpm;%PATH%"
+set "DSH_SHELL=pwsh"
+if exist "%ROOT%\data\portable.env" (
+  findstr /b /i /c:"SHELL=bash" "%ROOT%\data\portable.env" >nul 2>&1
+  if not errorlevel 1 set "DSH_SHELL=bash"
+)
+if /I not "%DSH_SHELL%"=="bash" set "DSH_SHELL=pwsh"
+
+if /I "%DSH_SHELL%"=="bash" (
+  set "PATH=%ROOT%\runtime\node;%ROOT%\runtime\pnpm;%ROOT%\runtime\git\usr\bin;%ROOT%\runtime\git\mingw64\bin;%ROOT%\runtime\git\cmd;%PATH%"
+) else (
+  set "PATH=%ROOT%\runtime\node;%ROOT%\runtime\pnpm;%ROOT%\runtime\git\cmd;%PATH%"
+)
+set "GIT_INSTALL_ROOT=%ROOT%\runtime\git"
+set "GIT_CONFIG_GLOBAL=%ROOT%\data\dsh-home\gitconfig"
 set "npm_config_cache=%ROOT%\data\cache\npm"
 set "npm_config_prefix=%ROOT%\data\cache\npm-prefix"
 set "PNPM_HOME=%ROOT%\data\cache\pnpm-home"
@@ -30,6 +44,8 @@ if not exist "%ROOT%\data\cache\pnpm-store" mkdir "%ROOT%\data\cache\pnpm-store"
 
 set "NODE_EXE=%ROOT%\runtime\node\node.exe"
 set "DSH_BIN=%ROOT%\app\node_modules\@deepseek-ai\dsh\lib\bin.js"
+set "GIT_EXE=%ROOT%\runtime\git\cmd\git.exe"
+set "PATCH=%ROOT%\runtime\portable\shell.cordis.yml"
 
 if not exist "%NODE_EXE%" (
   echo [dsh-portable] Bundled Node.js not found: "%NODE_EXE%"
@@ -39,7 +55,19 @@ if not exist "%DSH_BIN%" (
   echo [dsh-portable] Bundled dsh not found: "%DSH_BIN%"
   exit /b 1
 )
+if not exist "%GIT_EXE%" (
+  echo [dsh-portable] Bundled Git not found: "%GIT_EXE%"
+  exit /b 1
+)
 
 cd /d "%ROOT%\data\workspace"
+if /I "%~1"=="web" (
+  if exist "%PATCH%" (
+    "%NODE_EXE%" "%DSH_BIN%" web --patch "%PATCH%" %2 %3 %4 %5 %6 %7 %8 %9
+  ) else (
+    "%NODE_EXE%" "%DSH_BIN%" web %2 %3 %4 %5 %6 %7 %8 %9
+  )
+  exit /b %ERRORLEVEL%
+)
 "%NODE_EXE%" "%DSH_BIN%" %*
 exit /b %ERRORLEVEL%

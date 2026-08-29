@@ -18,6 +18,10 @@ $DshCmd = Join-Path $StageDir 'dsh.cmd'
 $StartCmd = Join-Path $StageDir 'start.cmd'
 $NodeExe = Join-Path $StageDir 'runtime\node\node.exe'
 $PnpmExe = Join-Path $StageDir 'runtime\pnpm\pnpm.exe'
+$GitExe = Join-Path $StageDir 'runtime\git\cmd\git.exe'
+$BashExe = Join-Path $StageDir 'runtime\git\usr\bin\bash.exe'
+$ShellOverlay = Join-Path $StageDir 'runtime\portable\shell.cordis.yml'
+$PortablePreset = Join-Path $StageDir 'runtime\portable\presets\portable\agent.cordis.yml'
 
 Write-Host "==> smoke: $StageDir"
 
@@ -25,6 +29,10 @@ if (-not (Test-Path $DshCmd)) { throw "missing dsh.cmd in $StageDir" }
 if (-not (Test-Path $StartCmd)) { throw "missing start.cmd in $StageDir" }
 if (-not (Test-Path $NodeExe)) { throw "missing bundled node.exe" }
 if (-not (Test-Path $PnpmExe)) { throw "missing bundled pnpm.exe" }
+if (-not (Test-Path $GitExe)) { throw "missing bundled git.exe" }
+if (-not (Test-Path $BashExe)) { throw "missing bundled Git Bash (usr\bin\bash.exe)" }
+if (-not (Test-Path $ShellOverlay)) { throw "missing shell overlay: $ShellOverlay" }
+if (-not (Test-Path $PortablePreset)) { throw "missing portable preset: $PortablePreset" }
 
 # TMP/TEMP redirection must remain commented out by default.
 $Launcher = Get-Content -LiteralPath $DshCmd -Raw
@@ -43,8 +51,22 @@ if ($Launcher -notmatch '(?im)^if exist "%ROOT%\\data\\npmrc" if not defined npm
 if ($Launcher -notmatch '(?im)^set "NARB_NATIVE_CACHE_DIR=%ROOT%\\data\\cache\\native-addons"\s*$') {
   throw 'dsh.cmd must keep the native addon cache inside data\cache\native-addons'
 }
+if ($Launcher -notmatch '(?im)^set "DSH_PORTABLE_ROOT=%ROOT%"\s*$') {
+  throw 'dsh.cmd must set DSH_PORTABLE_ROOT'
+}
+if ($Launcher -notmatch '(?im)^set "GIT_CONFIG_GLOBAL=%ROOT%\\data\\dsh-home\\gitconfig"\s*$') {
+  throw 'dsh.cmd must keep gitconfig inside data\dsh-home'
+}
+if ($Launcher -notmatch '(?im)runtime\\git\\cmd') {
+  throw 'dsh.cmd must prepend bundled runtime\git\cmd to PATH'
+}
+if ($Launcher -notmatch '(?im)web --patch "%PATCH%"') {
+  throw 'dsh.cmd must pass the portable shell overlay as web --patch'
+}
 $NpmrcExample = Join-Path $StageDir 'data\npmrc.example'
 if (-not (Test-Path -LiteralPath $NpmrcExample)) { throw "missing $NpmrcExample" }
+$PortableEnvExample = Join-Path $StageDir 'data\portable.env.example'
+if (-not (Test-Path -LiteralPath $PortableEnvExample)) { throw "missing $PortableEnvExample" }
 
 function Get-ProfileSnapshot {
   $paths = @(
@@ -54,7 +76,9 @@ function Get-ProfileSnapshot {
     (Join-Path $env:LOCALAPPDATA 'npm-cache'),
     (Join-Path $env:LOCALAPPDATA 'pnpm'),
     (Join-Path $env:LOCALAPPDATA 'pnpm-store'),
-    (Join-Path $env:LOCALAPPDATA 'node-addon-native-custom-loader')
+    (Join-Path $env:LOCALAPPDATA 'node-addon-native-custom-loader'),
+    (Join-Path $env:USERPROFILE '.gitconfig'),
+    (Join-Path $env:USERPROFILE '.git-credentials')
   )
   $snap = @{}
   foreach ($p in $paths) {
@@ -115,6 +139,29 @@ if (-not (Test-Path (Join-Path $StageDir 'runtime\pnpm\dist\pnpm.mjs'))) {
   throw 'runtime\pnpm\dist\pnpm.mjs missing — pnpm zip must be fully extracted'
 }
 
+# --- bundled Git ---
+Write-Host '==> git --version (bundled)'
+$GitVer = & $GitExe --version
+if ($LASTEXITCODE -ne 0) { throw "bundled git --version failed with exit code $LASTEXITCODE" }
+$GitVer = ("$GitVer").Trim()
+if ($GitVer -notmatch '^git version ') { throw "bundled git --version returned '$GitVer'" }
+Write-Host "    $GitVer"
+
+Write-Host '==> git bash -c'
+$BashOut = & $BashExe -c 'echo DSH_OK'
+if ($LASTEXITCODE -ne 0) { throw "bundled bash -c failed with exit code $LASTEXITCODE" }
+$BashOut = ("$BashOut").Trim()
+if ($BashOut -ne 'DSH_OK') { throw "bundled bash -c returned '$BashOut'" }
+Write-Host '    DSH_OK'
+
+$PresetText = Get-Content -LiteralPath $PortablePreset -Raw
+if ($PresetText -notmatch "process\.env\.DSH_SHELL !== 'bash'") {
+  throw 'portable preset must gate tool-bash on DSH_SHELL'
+}
+if ($PresetText -notmatch "process\.env\.DSH_SHELL === 'bash'") {
+  throw 'portable preset must gate tool-pwsh on DSH_SHELL'
+}
+
 # --- dump-config ---
 Write-Host '==> dsh web --dump-config'
 $Dump = & cmd /c "`"$DshCmd`" web --dump-config 2>&1"
@@ -131,6 +178,35 @@ if ($DumpNormalized -like "*$HomeNeedle*") {
   Write-Host '    dump-config did not echo absolute DSH_HOME (OK if layout differs); launcher still sets it'
 }
 Write-Host "    expected DSH_HOME=$ExpectedHome"
+$DumpText = ($Dump | Out-String)
+if ($DumpText -notmatch 'DSH_SHELL') {
+  throw 'dsh web --dump-config must include the portable shell overlay'
+}
+
+$PortableEnv = Join-Path $StageDir 'data\portable.env'
+$PortableEnvBackup = $null
+if (Test-Path -LiteralPath $PortableEnv) {
+  $PortableEnvBackup = Get-Content -LiteralPath $PortableEnv -Raw
+}
+try {
+  Set-Content -Path $PortableEnv -Value "SHELL=bash`r`n" -Encoding ascii
+  Write-Host '==> dsh web --dump-config (SHELL=bash)'
+  $DumpBash = & cmd /c "`"$DshCmd`" web --dump-config 2>&1"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host ($DumpBash | Out-String)
+    throw "dsh web --dump-config with SHELL=bash failed with exit code $LASTEXITCODE"
+  }
+  $DumpBashText = ($DumpBash | Out-String)
+  if ($DumpBashText -notmatch 'DSH_SHELL') {
+    throw 'SHELL=bash dump-config must still include the portable shell overlay'
+  }
+} finally {
+  if ($null -ne $PortableEnvBackup) {
+    Set-Content -Path $PortableEnv -Value $PortableEnvBackup -Encoding ascii -NoNewline
+  } elseif (Test-Path -LiteralPath $PortableEnv) {
+    Remove-Item -LiteralPath $PortableEnv -Force
+  }
+}
 
 # --- web HTTP probe ---
 Write-Host "==> dsh web --no-open (port $WebPort)"

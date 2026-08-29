@@ -5,6 +5,9 @@ param(
   [string]$DshVersion = '',
   [string]$NodeVersion = '',
   [string]$PnpmVersion = '',
+  [string]$GitVersion = '',
+  [string]$GitPortableFile = '',
+  [string]$GitSha256 = '',
   # auto: use npm when @deepseek-ai/dsh@ver exists, otherwise clone Git tag + release:pack
   # git: always clone dsh-v<ver> and run official release:pack
   # npm: require registry package
@@ -68,6 +71,88 @@ function Install-PnpmPayload([string]$Version, [string]$WorkDir, [string]$DestDi
   Copy-Item -Path (Join-Path $PnpmPayloadRoot '*') -Destination $DestDir -Recurse -Force
   if (-not (Test-Path (Join-Path $DestDir 'pnpm.exe'))) { throw 'pnpm.exe missing after extract copy' }
   if (-not (Test-Path (Join-Path $DestDir 'dist\pnpm.mjs'))) { throw 'dist\pnpm.mjs missing after extract copy' }
+}
+
+function Install-GitPayload {
+  param(
+    [string]$Version,
+    [string]$FileName,
+    [string]$ExpectedSha256,
+    [string]$WorkDir,
+    [string]$DestDir
+  )
+  Write-Host "==> downloading Git for Windows $Version portable x64"
+  $Sfx = Join-Path $WorkDir 'PortableGit.7z.exe'
+  $Url = "https://github.com/git-for-windows/git/releases/download/v$Version/$FileName"
+  Invoke-WebRequest -Uri $Url -OutFile $Sfx -UseBasicParsing
+  $Actual = (Get-FileHash -Path $Sfx -Algorithm SHA256).Hash.ToLowerInvariant()
+  $Expected = $ExpectedSha256.ToLowerInvariant()
+  if ($Actual -ne $Expected) { throw "Git SHA256 mismatch: $Actual != $Expected" }
+  Write-Host '    SHA256 OK'
+
+  # Current PortableGit SFX ignores -InstallPath/-o and always unpacks a
+  # PortableGit folder into the working directory (and runs post-install).
+  $Extracted = Join-Path $WorkDir 'PortableGit'
+  if (Test-Path -LiteralPath $Extracted) { Remove-Item -Recurse -Force $Extracted }
+  if (Test-Path -LiteralPath $DestDir) { Remove-Item -Recurse -Force $DestDir }
+  # The SFX process can return before unpack finishes; wait for git.exe.
+  Invoke-Native -FilePath $Sfx -ArgumentList @('-y', '-gm2') -WorkingDirectory $WorkDir
+  $GitExe = Join-Path $Extracted 'cmd\git.exe'
+  $BashExe = Join-Path $Extracted 'usr\bin\bash.exe'
+  $deadline = (Get-Date).AddMinutes(5)
+  $gitSeenAt = $null
+  while ((Get-Date) -lt $deadline) {
+    if ((Test-Path -LiteralPath $GitExe) -and (Test-Path -LiteralPath $BashExe)) {
+      if ($null -eq $gitSeenAt) { $gitSeenAt = Get-Date }
+      $postGone = -not (Test-Path -LiteralPath (Join-Path $Extracted 'post-install.bat'))
+      $waited = ((Get-Date) - $gitSeenAt).TotalSeconds -ge 8
+      if ($postGone -or $waited) { break }
+    }
+    Start-Sleep -Seconds 1
+  }
+  if (-not (Test-Path -LiteralPath $GitExe)) {
+    throw "PortableGit SFX did not create $GitExe"
+  }
+  New-Item -ItemType Directory -Force -Path (Split-Path $DestDir) | Out-Null
+  Move-Item -LiteralPath $Extracted -Destination $DestDir
+
+  $Post = Join-Path $DestDir 'post-install.bat'
+  if (Test-Path -LiteralPath $Post) {
+    Write-Host '    running post-install.bat'
+    Invoke-Native -FilePath $Post -WorkingDirectory $DestDir
+  }
+  $GitExe = Join-Path $DestDir 'cmd\git.exe'
+  $BashExe = Join-Path $DestDir 'usr\bin\bash.exe'
+  if (-not (Test-Path -LiteralPath $GitExe) -or -not (Test-Path -LiteralPath $BashExe)) {
+    Write-Host "    extract listing of $DestDir :"
+    Get-ChildItem -LiteralPath $DestDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "      $($_.Name)" }
+    throw "PortableGit extract incomplete (need cmd\git.exe and usr\bin\bash.exe) under $DestDir"
+  }
+}
+
+function Publish-PortablePreset([string]$AppDir, [string]$DestDir) {
+  $src = Join-Path $AppDir 'node_modules\@deepseek-ai\dsh-agent-presets\presets\standard'
+  if (-not (Test-Path -LiteralPath (Join-Path $src 'agent.cordis.yml'))) {
+    throw "shipped standard preset missing: $src"
+  }
+  if (Test-Path -LiteralPath $DestDir) { Remove-Item -Recurse -Force $DestDir }
+  New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+  Copy-Item -Path (Join-Path $src '*') -Destination $DestDir -Recurse -Force
+
+  $composition = Join-Path $DestDir 'agent.cordis.yml'
+  $text = [System.IO.File]::ReadAllText($composition)
+  $bashNeedle = "disabled: !!js process.platform === 'win32'"
+  $pwshNeedle = "disabled: !!js process.platform !== 'win32'"
+  if (-not $text.Contains($bashNeedle) -or -not $text.Contains($pwshNeedle)) {
+    throw 'standard preset shell gates changed; update Publish-PortablePreset'
+  }
+  $text = $text.Replace($bashNeedle, "disabled: !!js process.env.DSH_SHELL !== 'bash'")
+  $text = $text.Replace($pwshNeedle, "disabled: !!js process.env.DSH_SHELL === 'bash'")
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($composition, $text, $utf8)
+
+  $meta = "name: Portable`r`ndescription: Standard coding agent. Shell follows data\portable.env (SHELL=pwsh or SHELL=bash).`r`norder: 1`r`n"
+  [System.IO.File]::WriteAllText((Join-Path $DestDir 'preset.yml'), $meta, $utf8)
 }
 
 function Install-DshFromNpm([string]$Version, [string]$NpmCmd, [string]$AppDir) {
@@ -199,6 +284,9 @@ function Install-DshFromGitTag {
 $ver = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $Root 'versions.env') -Raw)
 if (-not $NodeVersion) { $NodeVersion = $ver['NODE_VERSION'] }
 if (-not $PnpmVersion) { $PnpmVersion = $ver['PNPM_VERSION'] }
+if (-not $GitVersion) { $GitVersion = $ver['GIT_VERSION'] }
+if (-not $GitPortableFile) { $GitPortableFile = $ver['GIT_PORTABLE_FILE'] }
+if (-not $GitSha256) { $GitSha256 = $ver['GIT_SHA256'] }
 if (-not $DshVersion) {
   if ($env:DSH_VERSION) { $DshVersion = $env:DSH_VERSION }
   else { $DshVersion = $ver['DSH_VERSION_FALLBACK'] }
@@ -207,6 +295,9 @@ if ($env:DSH_SOURCE) { $Source = $env:DSH_SOURCE }
 
 if (-not $NodeVersion) { throw 'NODE_VERSION is not set' }
 if (-not $PnpmVersion) { throw 'PNPM_VERSION is not set' }
+if (-not $GitVersion) { throw 'GIT_VERSION is not set' }
+if (-not $GitPortableFile) { throw 'GIT_PORTABLE_FILE is not set' }
+if (-not $GitSha256) { throw 'GIT_SHA256 is not set' }
 if (-not $DshVersion) { throw 'DSH_VERSION is not set' }
 
 $onNpm = Test-NpmDsh $DshVersion
@@ -231,6 +322,7 @@ Write-Host "    DSH_VERSION  = $DshVersion"
 Write-Host "    UPSTREAM_TAG = $UpstreamTag"
 Write-Host "    NODE_VERSION = $NodeVersion"
 Write-Host "    PNPM_VERSION = $PnpmVersion"
+Write-Host "    GIT_VERSION  = $GitVersion"
 Write-Host "    SOURCE       = $Source ($(if ($useNpm) { 'npm registry' } else { 'git tag + release:pack' }))"
 
 # Keep upstream release:pack output when retrying the same DSH version.
@@ -300,13 +392,24 @@ if ($useNpm) {
 $DshBin = Join-Path $AppDir 'node_modules\@deepseek-ai\dsh\lib\bin.js'
 if (-not (Test-Path $DshBin)) { throw "dsh entry missing: $DshBin" }
 
-# --- Launchers & docs ---
+# --- Git for Windows Portable (runtime git + Git Bash) ---
+$GitDir = Join-Path $Stage 'runtime\git'
+Install-GitPayload -Version $GitVersion -FileName $GitPortableFile `
+  -ExpectedSha256 $GitSha256 -WorkDir $Work -DestDir $GitDir
+
+# --- Launchers, overlay, docs ---
 Write-Host '==> copying launchers and docs'
 Copy-CmdAsciiCrlf (Join-Path $Root 'packaging\dsh.cmd') (Join-Path $Stage 'dsh.cmd')
 Copy-CmdAsciiCrlf (Join-Path $Root 'packaging\start.cmd') (Join-Path $Stage 'start.cmd')
 Copy-Item (Join-Path $Root 'packaging\README.txt') (Join-Path $Stage 'README.txt') -Force
 Copy-Item (Join-Path $Root 'packaging\NOTICE.txt') (Join-Path $Stage 'NOTICE.txt') -Force
 Copy-Item (Join-Path $Root 'LICENSE') (Join-Path $Stage 'LICENSE') -Force
+
+$PortableRuntime = Join-Path $Stage 'runtime\portable'
+New-Item -ItemType Directory -Force -Path $PortableRuntime | Out-Null
+Copy-Item (Join-Path $Root 'packaging\runtime-portable\shell.cordis.yml') `
+  (Join-Path $PortableRuntime 'shell.cordis.yml') -Force
+Publish-PortablePreset -AppDir $AppDir -DestDir (Join-Path $PortableRuntime 'presets\portable')
 
 foreach ($rel in @(
   'data\dsh-home',
@@ -319,6 +422,11 @@ foreach ($rel in @(
   New-Item -ItemType Directory -Force -Path (Join-Path $Stage $rel) | Out-Null
 }
 Copy-Item (Join-Path $Root 'packaging\npmrc.example') (Join-Path $Stage 'data\npmrc.example') -Force
+Copy-Item (Join-Path $Root 'packaging\portable.env.example') (Join-Path $Stage 'data\portable.env.example') -Force
+$PortableEnv = Join-Path $Stage 'data\portable.env'
+if (-not (Test-Path -LiteralPath $PortableEnv)) {
+  Copy-Item (Join-Path $Root 'packaging\portable.env.example') $PortableEnv -Force
+}
 @(
   'data\dsh-home\.keep',
   'data\workspace\.keep',
@@ -333,6 +441,7 @@ $VersionsJson = @{
   upstreamTag = $UpstreamTag
   node        = $NodeVersion
   pnpm        = $PnpmVersion
+  git         = $GitVersion
   source      = $(if ($useNpm) { 'npm' } else { 'git-tag' })
   builtAt     = (Get-Date).ToUniversalTime().ToString('o')
   target      = 'win-x64'

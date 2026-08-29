@@ -2,7 +2,7 @@
 
 Unofficial **Windows 11 x64** portable packager for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 
-> **Not affiliated with DeepSeek.** This repo only bundles the official `@deepseek-ai/dsh` npm package with an official Node.js runtime and pnpm so you can unzip and run — no system install, no PATH changes.
+> **Not affiliated with DeepSeek.** This repo only bundles the official `@deepseek-ai/dsh` npm package with an official Node.js runtime, pnpm, and Git for Windows Portable so you can unzip and run — no system install, no PATH changes.
 
 ## Download
 
@@ -30,6 +30,7 @@ Persistent state stays inside the folder under `data\`:
 | `data\workspace\` | Default cwd when launching |
 | `data\cache\` | npm, pnpm, and runtime native addon caches |
 | `data\npmrc` | Optional npm/pnpm userconfig (copy from `npmrc.example`) |
+| `data\portable.env` | Feature switches (`SHELL=pwsh` or `SHELL=bash`) |
 
 **Nothing is written to `%USERPROFILE%\.dsh`.** Copy the whole folder to move your environment.
 
@@ -58,9 +59,22 @@ rem set "TMP=%ROOT%\data\tmp"
 - Official Node.js **win-x64** zip (SHA-256 verified from nodejs.org)
 - Official DeepSeek Harness from Git tag `dsh-v*` via upstream `release:pack` (or npm when that version is already published)
 - Official **pnpm** Windows binary (for `dsh plugin`)
+- Official **Git for Windows Portable** x64 (SHA-256 verified). `git` on PATH is this copy, not a system Git.
 - Launchers: `dsh.cmd`, `start.cmd`
 
 Native modules are installed on `windows-latest` so the tree is win32-x64.
+
+### pwsh vs Git Bash
+
+The agent shell defaults to **pwsh** (upstream Windows behavior). To use bundled Git Bash instead, edit `data\portable.env`:
+
+```
+SHELL=bash
+```
+
+Restart `start.cmd`. Bundled `git.exe` stays first on PATH in both modes. Git identity is stored in `data\dsh-home\gitconfig`, not `%USERPROFILE%\.gitconfig`. SSH still uses your existing `%USERPROFILE%\.ssh` keys unless you set `HOME` yourself. Git Credential Manager uses the Windows Credential Manager.
+
+A Git Bash window is `runtime\git\git-bash.exe`.
 
 ## Releases follow upstream
 

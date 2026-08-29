@@ -1,0 +1,20 @@
+# Portable overlay: switch the host shell executor with DSH_SHELL from data\portable.env.
+# dsh.cmd passes this file as `web --patch`. Do not load it as a profile user patch.
+
+- id: bash-sandbox
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  disabled: !!js process.env.DSH_SHELL !== 'bash'
+  config:
+    timeoutMs: 60000
+
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+  disabled: !!js process.env.DSH_SHELL === 'bash'
+
+- id: agent-presets
+  name: '@deepseek-ai/dsh-agent-presets'
+  config:
+    default: portable
+    roots:
+      - path: !!js process.env.DSH_PORTABLE_ROOT + '/runtime/portable/presets'
+        trust: system

@@ -102,11 +102,12 @@ jobs:
           $versions = ConvertFrom-StringData (Get-Content -LiteralPath versions.env -Raw)
           $node = $versions['NODE_VERSION']
           $pnpm = $versions['PNPM_VERSION']
+          $git = $versions['GIT_VERSION']
 
           $notes = @"
           Unofficial Windows 11 x64 portable build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ``dsh@$ver``.
 
-          **Not affiliated with DeepSeek.** Bundles DeepSeek Harness from upstream tag ``$tag`` (npm when published, otherwise official ``release:pack``), official Node.js v$node, and pnpm v$pnpm.
+          **Not affiliated with DeepSeek.** Bundles DeepSeek Harness from upstream tag ``$tag`` (npm when published, otherwise official ``release:pack``), official Node.js v$node, pnpm v$pnpm, and Git for Windows Portable ``$git``.
 
           Upstream tag: https://github.com/deepseek-ai/deepseek-harness/releases/tag/$tag
 

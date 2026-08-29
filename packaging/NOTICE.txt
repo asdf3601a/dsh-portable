@@ -9,6 +9,8 @@ It redistributes, without modification:
                               https://github.com/deepseek-ai/deepseek-harness
   • Node.js                   Node.js license — https://github.com/nodejs/node/blob/main/LICENSE
   • pnpm                      MIT License — https://github.com/pnpm/pnpm
+  • Git for Windows           GPL-2.0 — https://github.com/git-for-windows/git
+                              (PortableGit; licenses also under runtime\git\)
 
 DeepSeek, DeepSeek Harness, and related marks belong to their respective owners.
 

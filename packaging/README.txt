@@ -2,7 +2,8 @@ dsh-portable (Windows 11 x64)
 =============================
 
 Unofficial portable build of DeepSeek Harness (dsh).
-Not affiliated with DeepSeek. Bundles official Node.js + @deepseek-ai/dsh + pnpm.
+Not affiliated with DeepSeek. Bundles official Node.js + @deepseek-ai/dsh + pnpm
++ Git for Windows Portable.
 
 Quick start
 -----------
@@ -24,6 +25,7 @@ Portable data (stays in this folder)
   data\workspace\    default working directory
   data\cache\        npm, pnpm, and runtime native addon caches
   data\npmrc         optional npm/pnpm userconfig (copy from npmrc.example)
+  data\portable.env  feature switches (SHELL=pwsh or SHELL=bash)
 
 These files do NOT go to %USERPROFILE%\.dsh.
 Copy the whole folder to another PC / USB drive to take your environment with you.
@@ -40,6 +42,21 @@ npm group/proxy (or any registry):
 Precedence: process env (e.g. npm_config_registry) > data\npmrc > npm defaults.
 Use data\npmrc for //host/:_authToken= style auth. Leave it absent to keep the
 default public registry.
+
+Git and shell
+-------------
+Bundled Git is always first on PATH (runtime\git\cmd\git.exe). System Git is
+not used unless you remove the bundled copy.
+
+The agent shell defaults to pwsh. To use Git Bash instead, edit
+data\portable.env (copy from portable.env.example if needed):
+
+  SHELL=bash
+
+then restart start.cmd. Git config is data\dsh-home\gitconfig. SSH keys still
+come from %USERPROFILE%\.ssh unless you set HOME yourself.
+
+To open Git Bash: runtime\git\git-bash.exe
 
 Temp files
 ----------
