@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       dsh_version:
-        description: '@deepseek-ai/dsh version to package (npm)'
+        description: 'Upstream dsh version to package'
         required: true
         type: string
   workflow_call:
     inputs:
       dsh_version:
-        description: '@deepseek-ai/dsh version to package (npm)'
+        description: 'Upstream dsh version to package'
         required: true
         type: string
 
@@ -21,46 +21,32 @@ jobs:
   release:
     name: Build, smoke, publish
     runs-on: windows-latest
+    concurrency:
+      group: dsh-portable-release-${{ inputs.dsh_version }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve package source
-        id: source
-        shell: pwsh
-        run: |
-          $ver = '${{ inputs.dsh_version }}'
-          if (-not $ver) { throw 'dsh_version input is required' }
-          $onNpm = $false
-          try {
-            $got = (Invoke-RestMethod "https://registry.npmjs.org/@deepseek-ai/dsh/$ver").version
-            if ($got -eq $ver) { $onNpm = $true }
-          } catch { $onNpm = $false }
-          if ($onNpm) {
-            Write-Host "npm has @deepseek-ai/dsh@$ver — will prefer registry (auto)"
-            "mode=auto" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          } else {
-            Write-Host "npm missing @deepseek-ai/dsh@$ver — will clone git tag dsh-v$ver + release:pack"
-            "mode=git" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          }
 
       - name: Skip if release asset already exists
         id: gate
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          DSH_VERSION: ${{ inputs.dsh_version }}
         run: |
-          $ver = '${{ inputs.dsh_version }}'
+          $ver = $env:DSH_VERSION
+          if (-not $ver) { throw 'dsh_version input is required' }
           $tag = "dsh-v$ver"
-          $asset = "dsh-portable-$ver-win-x64.zip"
+          $requiredAssets = @("dsh-portable-$ver-win-x64.zip", 'SHA256SUMS.txt')
           $exists = $false
-          try {
-            $rel = gh release view $tag --json assets 2>$null | ConvertFrom-Json
-            if ($rel.assets | Where-Object { $_.name -eq $asset }) { $exists = $true }
-          } catch {
-            $exists = $false
+          $raw = gh release view $tag --json assets 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $rel = $raw | ConvertFrom-Json
+            $assetNames = @($rel.assets | ForEach-Object { $_.name })
+            $exists = @($requiredAssets | Where-Object { $_ -notin $assetNames }).Count -eq 0
           }
           if ($exists) {
-            Write-Host "Release $tag already has $asset — skipping build"
+            Write-Host "Release $tag already has the portable assets — skipping build"
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } else {
             "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -69,18 +55,27 @@ jobs:
       - name: Build portable ZIP
         if: steps.gate.outputs.skip != 'true'
         shell: pwsh
+        env:
+          DSH_VERSION: ${{ inputs.dsh_version }}
         run: |
           ./scripts/build-windows.ps1 `
-            -DshVersion '${{ inputs.dsh_version }}' `
-            -Source '${{ steps.source.outputs.mode }}'
+            -DshVersion $env:DSH_VERSION `
+            -Source auto
 
-      - name: Smoke test
+      - name: Smoke test packaged ZIP
         if: steps.gate.outputs.skip != 'true'
         shell: pwsh
+        env:
+          DSH_VERSION: ${{ inputs.dsh_version }}
         run: |
+          $zip = Resolve-Path -LiteralPath "./dist/dsh-portable-$env:DSH_VERSION-win-x64.zip"
+          $extract = Join-Path $env:RUNNER_TEMP 'dsh-portable-smoke'
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & tar -xf $zip -C $extract
+          if ($LASTEXITCODE -ne 0) { throw "tar extract failed with exit code $LASTEXITCODE" }
           ./scripts/smoke-windows.ps1 `
-            -StageDir ./build/win-x64/dsh-portable `
-            -ExpectedDshVersion '${{ inputs.dsh_version }}'
+            -StageDir (Join-Path $extract 'dsh-portable') `
+            -ExpectedDshVersion $env:DSH_VERSION
 
       - uses: actions/upload-artifact@v4
         if: steps.gate.outputs.skip != 'true'
@@ -96,16 +91,15 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          DSH_VERSION: ${{ inputs.dsh_version }}
         run: |
-          $ver = '${{ inputs.dsh_version }}'
+          $ver = $env:DSH_VERSION
           $tag = "dsh-v$ver"
           $zip = Get-ChildItem dist/dsh-portable-*-win-x64.zip | Select-Object -First 1
           $sums = Get-Item dist/SHA256SUMS.txt
-          $node = $null; $pnpm = $null
-          foreach ($line in Get-Content versions.env) {
-            if ($line -match '^NODE_VERSION=(.+)$') { $node = $Matches[1] }
-            if ($line -match '^PNPM_VERSION=(.+)$') { $pnpm = $Matches[1] }
-          }
+          $versions = ConvertFrom-StringData (Get-Content -LiteralPath versions.env -Raw)
+          $node = $versions['NODE_VERSION']
+          $pnpm = $versions['PNPM_VERSION']
 
           $notes = @"
           Unofficial Windows 11 x64 portable build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ``dsh@$ver``.
@@ -128,7 +122,22 @@ jobs:
           $notesFile = 'dist/release-notes.md'
           Set-Content -Path $notesFile -Value $notes -Encoding utf8
 
-          gh release create $tag $zip.FullName $sums.FullName `
-            --title "dsh-portable $ver (win-x64)" `
-            --notes-file $notesFile `
-            --latest=false
+          $null = gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip.FullName $sums.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "release asset upload failed with exit code $LASTEXITCODE" }
+            if ($ver.Contains('-')) {
+              gh release edit $tag --prerelease
+              if ($LASTEXITCODE -ne 0) { throw "release prerelease update failed with exit code $LASTEXITCODE" }
+            }
+          } else {
+            $args = @(
+              'release', 'create', $tag, $zip.FullName, $sums.FullName,
+              '--title', "dsh-portable $ver (win-x64)",
+              '--notes-file', $notesFile,
+              '--latest=false'
+            )
+            if ($ver.Contains('-')) { $args += '--prerelease' }
+            & gh @args
+            if ($LASTEXITCODE -ne 0) { throw "release creation failed with exit code $LASTEXITCODE" }
+          }

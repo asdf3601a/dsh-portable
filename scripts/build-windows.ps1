@@ -16,15 +16,6 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
 
-function Read-VersionsEnv {
-  $map = @{}
-  Get-Content (Join-Path $Root 'versions.env') | ForEach-Object {
-    if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
-    if ($_ -match '^(\w+)=(.*)$') { $map[$Matches[1]] = $Matches[2].Trim() }
-  }
-  return $map
-}
-
 function Test-NpmDsh([string]$Version) {
   try {
     $pkg = Invoke-RestMethod -Uri "https://registry.npmjs.org/@deepseek-ai/dsh/$Version"
@@ -104,7 +95,6 @@ function Install-DshFromGitTag {
     [string]$Version,
     [string]$WorkDir,
     [string]$AppDir,
-    [string]$NodeExe,
     [string]$NpmCmd,
     [string]$PnpmExe,
     [string]$RuntimeNode
@@ -206,7 +196,7 @@ function Install-DshFromGitTag {
 }
 
 # --- resolve versions ---
-$ver = Read-VersionsEnv
+$ver = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $Root 'versions.env') -Raw)
 if (-not $NodeVersion) { $NodeVersion = $ver['NODE_VERSION'] }
 if (-not $PnpmVersion) { $PnpmVersion = $ver['PNPM_VERSION'] }
 if (-not $DshVersion) {
@@ -304,7 +294,7 @@ if ($useNpm) {
   Install-DshFromNpm -Version $DshVersion -NpmCmd $NpmCmd -AppDir $AppDir
 } else {
   Install-DshFromGitTag -Version $DshVersion -WorkDir $Work -AppDir $AppDir `
-    -NodeExe $NodeExe -NpmCmd $NpmCmd -PnpmExe $PnpmExe -RuntimeNode $RuntimeNode
+    -NpmCmd $NpmCmd -PnpmExe $PnpmExe -RuntimeNode $RuntimeNode
 }
 
 $DshBin = Join-Path $AppDir 'node_modules\@deepseek-ai\dsh\lib\bin.js'
@@ -329,7 +319,6 @@ foreach ($rel in @(
   New-Item -ItemType Directory -Force -Path (Join-Path $Stage $rel) | Out-Null
 }
 Copy-Item (Join-Path $Root 'packaging\npmrc.example') (Join-Path $Stage 'data\npmrc.example') -Force
-Copy-Item (Join-Path $Root 'packaging\registry.env.example') (Join-Path $Stage 'data\registry.env.example') -Force
 @(
   'data\dsh-home\.keep',
   'data\workspace\.keep',

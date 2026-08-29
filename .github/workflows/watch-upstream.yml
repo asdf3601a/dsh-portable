@@ -7,8 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   detect:
@@ -32,6 +31,8 @@ jobs:
     name: Publish ${{ matrix.dsh_version }}
     needs: detect
     if: needs.detect.outputs.has_pending == 'true'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -40,4 +41,3 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       dsh_version: ${{ matrix.dsh_version }}
-    secrets: inherit

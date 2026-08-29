@@ -28,9 +28,8 @@ Persistent state stays inside the folder under `data\`:
 |------|---------|
 | `data\dsh-home\` | `DSH_HOME` — settings, credentials, sessions, plugins |
 | `data\workspace\` | Default cwd when launching |
-| `data\cache\` | npm / pnpm caches |
+| `data\cache\` | npm, pnpm, and runtime native addon caches |
 | `data\npmrc` | Optional npm/pnpm userconfig (copy from `npmrc.example`) |
-| `data\registry.env` | Optional `KEY=VALUE` registry settings (copy from `registry.env.example`) |
 
 **Nothing is written to `%USERPROFILE%\.dsh`.** Copy the whole folder to move your environment.
 
@@ -38,10 +37,10 @@ Persistent state stays inside the folder under `data\`:
 
 By default npm and pnpm use the public registry. To use a Sonatype Nexus npm group/proxy (or any registry) at runtime:
 
-1. Copy `data\npmrc.example` → `data\npmrc` and/or `data\registry.env.example` → `data\registry.env`, then edit (no spaces around `=`).
+1. Copy `data\npmrc.example` → `data\npmrc`, then edit (no spaces around `=`).
 2. Restart `dsh` / `start.cmd`.
 
-Precedence: process env (for example `npm_config_registry`) → `data\registry.env` → `data\npmrc` → npm defaults. Put `//host/:_authToken=` style auth in `data\npmrc`. Secrets in `data\` travel with the portable folder; leave both files absent to keep the public registry.
+Precedence: process env (for example `npm_config_registry`) → `data\npmrc` → npm defaults. Put `//host/:_authToken=` style auth in `data\npmrc`. Secrets in `data\` travel with the portable folder; leave the file absent to keep the public registry.
 
 ### Temp files
 

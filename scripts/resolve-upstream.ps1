@@ -26,15 +26,6 @@ function Get-GitHubHeaders {
   return $headers
 }
 
-function Test-NpmPackage([string]$Version) {
-  try {
-    $pkg = Invoke-RestMethod -Uri "https://registry.npmjs.org/@deepseek-ai/dsh/$Version"
-    return [bool]$pkg.version
-  } catch {
-    return $false
-  }
-}
-
 function Get-PublishedPortableVersions([string]$Repo) {
   $published = New-Object 'System.Collections.Generic.HashSet[string]'
   if ($Repo -eq 'local/dsh-portable') {
@@ -54,10 +45,6 @@ function Get-PublishedPortableVersions([string]$Repo) {
       if ($asset.name -match '^dsh-portable-(.+)-win-x64\.zip$') {
         [void]$published.Add($Matches[1])
       }
-    }
-    $tagName = [string]$rel.tag_name
-    if ($tagName -match '^dsh-v(.+)$') {
-      [void]$published.Add($Matches[1])
     }
   }
   return , $published
@@ -95,20 +82,17 @@ foreach ($i in $indices) {
     Write-Host "    skip $tag (already published here)"
     continue
   }
-  $onNpm = Test-NpmPackage $ver
-  $source = if ($onNpm) { 'npm-or-git' } else { 'git-tag' }
-  Write-Host "    pending $tag ($source)"
+  Write-Host "    pending $tag"
   [void]$pending.Add([pscustomobject]@{
     tag          = $tag
     version      = $ver
     html_url     = [string]$rel.html_url
     published_at = [string]$rel.published_at
-    on_npm       = $onNpm
   })
 }
 
 if ($Json) {
-  $pending | ConvertTo-Json -Compress -Depth 5
+  ConvertTo-Json -InputObject $pending.ToArray() -Compress -Depth 5
   return
 }
 
@@ -116,7 +100,6 @@ if ($pending.Count -eq 0) {
   Write-Host '==> nothing to publish'
   if ($env:GITHUB_OUTPUT) {
     "has_pending=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-    "versions=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
     'versions_json=[]' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
   }
   return
@@ -128,7 +111,6 @@ $versionsJson = ConvertTo-Json -InputObject $versionList -Compress
 Write-Host "==> pending versions: $versionsCsv"
 if ($env:GITHUB_OUTPUT) {
   "has_pending=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-  "versions=$versionsCsv" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
   "versions_json=$versionsJson" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 }
 

@@ -19,10 +19,8 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          $fallback = $null
-          foreach ($line in Get-Content versions.env) {
-            if ($line -match '^DSH_VERSION_FALLBACK=(.+)$') { $fallback = $Matches[1]; break }
-          }
+          $versions = ConvertFrom-StringData (Get-Content -LiteralPath versions.env -Raw)
+          $fallback = $versions['DSH_VERSION_FALLBACK']
           $ver = $fallback
           try {
             $rels = Invoke-RestMethod 'https://api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=10' -Headers @{
@@ -41,17 +39,26 @@ jobs:
 
       - name: Build portable ZIP
         shell: pwsh
+        env:
+          DSH_VERSION: ${{ steps.ver.outputs.dsh_version }}
         run: |
           ./scripts/build-windows.ps1 `
-            -DshVersion '${{ steps.ver.outputs.dsh_version }}' `
+            -DshVersion $env:DSH_VERSION `
             -Source auto
 
-      - name: Smoke test
+      - name: Smoke test packaged ZIP
         shell: pwsh
+        env:
+          DSH_VERSION: ${{ steps.ver.outputs.dsh_version }}
         run: |
+          $zip = Resolve-Path -LiteralPath "./dist/dsh-portable-$env:DSH_VERSION-win-x64.zip"
+          $extract = Join-Path $env:RUNNER_TEMP 'dsh-portable-smoke'
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & tar -xf $zip -C $extract
+          if ($LASTEXITCODE -ne 0) { throw "tar extract failed with exit code $LASTEXITCODE" }
           ./scripts/smoke-windows.ps1 `
-            -StageDir ./build/win-x64/dsh-portable `
-            -ExpectedDshVersion '${{ steps.ver.outputs.dsh_version }}'
+            -StageDir (Join-Path $extract 'dsh-portable') `
+            -ExpectedDshVersion $env:DSH_VERSION
 
       - uses: actions/upload-artifact@v4
         with:

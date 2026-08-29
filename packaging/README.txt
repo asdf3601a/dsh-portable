@@ -22,9 +22,8 @@ Portable data (stays in this folder)
 ------------------------------------
   data\dsh-home\     settings, credentials, sessions, plugins  (DSH_HOME)
   data\workspace\    default working directory
-  data\cache\        npm / pnpm caches
+  data\cache\        npm, pnpm, and runtime native addon caches
   data\npmrc         optional npm/pnpm userconfig (copy from npmrc.example)
-  data\registry.env  optional KEY=VALUE registry settings (copy from registry.env.example)
 
 These files do NOT go to %USERPROFILE%\.dsh.
 Copy the whole folder to another PC / USB drive to take your environment with you.
@@ -35,13 +34,12 @@ Optional Nexus / npm registry
 By default npm and pnpm use the public registry. To point them at a Sonatype Nexus
 npm group/proxy (or any registry):
 
-1. Copy data\npmrc.example to data\npmrc and/or data\registry.env.example to
-   data\registry.env, then edit (no spaces around '=').
+1. Copy data\npmrc.example to data\npmrc, then edit (no spaces around '=').
 2. Restart dsh (close the console running start.cmd, then start again).
 
-Precedence: process env (e.g. npm_config_registry) > data\registry.env >
-data\npmrc > npm defaults. Use data\npmrc for //host/:_authToken= style auth.
-Leave both files absent to keep the default public registry.
+Precedence: process env (e.g. npm_config_registry) > data\npmrc > npm defaults.
+Use data\npmrc for //host/:_authToken= style auth. Leave it absent to keep the
+default public registry.
 
 Temp files
 ----------

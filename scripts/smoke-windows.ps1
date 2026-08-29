@@ -37,97 +37,14 @@ if ($Launcher -notmatch '(?im)^rem set "TMP=%ROOT%\\data\\tmp"\s*$') {
 if ($Launcher -match '(?im)^set "TEMP=%ROOT%\\data\\tmp"\s*$' -or $Launcher -match '(?im)^set "TMP=%ROOT%\\data\\tmp"\s*$') {
   throw 'dsh.cmd must not enable TMP/TEMP redirection by default'
 }
-if ($Launcher -notmatch '(?im)registry\.env') {
-  throw 'dsh.cmd must optionally load data\registry.env'
-}
-if ($Launcher -notmatch '(?im)npm_config_userconfig') {
+if ($Launcher -notmatch '(?im)^if exist "%ROOT%\\data\\npmrc" if not defined npm_config_userconfig set "npm_config_userconfig=%ROOT%\\data\\npmrc"\s*$') {
   throw 'dsh.cmd must optionally set npm_config_userconfig from data\npmrc'
 }
-$NpmrcExample = Join-Path $StageDir 'data\npmrc.example'
-$RegistryEnvExample = Join-Path $StageDir 'data\registry.env.example'
-if (-not (Test-Path -LiteralPath $NpmrcExample)) { throw "missing $NpmrcExample" }
-if (-not (Test-Path -LiteralPath $RegistryEnvExample)) { throw "missing $RegistryEnvExample" }
-
-# --- optional registry loader (mirrors dsh.cmd; no dsh network required) ---
-Write-Host '==> registry.env / npmrc loader'
-$RegistryEnvPath = Join-Path $StageDir 'data\registry.env'
-$NpmrcPath = Join-Path $StageDir 'data\npmrc'
-$probeDir = Join-Path $StageDir 'data\cache'
-$probeCmd = Join-Path $probeDir 'smoke-registry-probe.cmd'
-New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
-$hadRegistryEnv = Test-Path -LiteralPath $RegistryEnvPath
-$hadNpmrc = Test-Path -LiteralPath $NpmrcPath
-$backupRegistryEnv = $null
-$backupNpmrc = $null
-if ($hadRegistryEnv) { $backupRegistryEnv = Get-Content -LiteralPath $RegistryEnvPath -Raw }
-if ($hadNpmrc) { $backupNpmrc = Get-Content -LiteralPath $NpmrcPath -Raw }
-try {
-  Set-Content -LiteralPath $RegistryEnvPath -Value "npm_config_registry=https://nexus.example.com/repository/npm-group/`r`nnpm_config_always_auth=true`r`n" -Encoding ascii -NoNewline
-  Set-Content -LiteralPath $NpmrcPath -Value "registry=https://nexus.example.com/repository/npm-group/`r`n" -Encoding ascii -NoNewline
-  $probeBody = @"
-@echo off
-setlocal EnableExtensions
-set "ROOT=$StageDir"
-if exist "%ROOT%\data\registry.env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%\data\registry.env") do (
-    if not "%%A"=="" if not defined %%A set "%%A=%%B"
-  )
-)
-if exist "%ROOT%\data\npmrc" set "npm_config_userconfig=%ROOT%\data\npmrc"
-echo REGISTRY=%npm_config_registry%
-echo ALWAYS=%npm_config_always_auth%
-echo USERCONFIG=%npm_config_userconfig%
-"@
-  [System.IO.File]::WriteAllText($probeCmd, ($probeBody -replace "`n", "`r`n"), [System.Text.Encoding]::ASCII)
-  $probeOut = & cmd /c "`"$probeCmd`""
-  $probeText = ($probeOut | Out-String)
-  if ($probeText -notmatch 'REGISTRY=https://nexus\.example\.com/repository/npm-group/') {
-    throw "registry.env did not set npm_config_registry; output: $probeText"
-  }
-  if ($probeText -notmatch 'ALWAYS=true') {
-    throw "registry.env did not set npm_config_always_auth; output: $probeText"
-  }
-  $expectedUserconfig = Join-Path $StageDir 'data\npmrc'
-  if ($probeText -notmatch [regex]::Escape("USERCONFIG=$expectedUserconfig")) {
-    throw "npmrc did not set npm_config_userconfig to $expectedUserconfig; output: $probeText"
-  }
-
-  # Pre-set env must win over registry.env
-  $probeOverride = Join-Path $probeDir 'smoke-registry-override.cmd'
-  $overrideBody = @"
-@echo off
-setlocal EnableExtensions
-set "ROOT=$StageDir"
-set "npm_config_registry=https://env-wins.example/repository/npm/"
-if exist "%ROOT%\data\registry.env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%\data\registry.env") do (
-    if not "%%A"=="" if not defined %%A set "%%A=%%B"
-  )
-)
-echo REGISTRY=%npm_config_registry%
-"@
-  [System.IO.File]::WriteAllText($probeOverride, ($overrideBody -replace "`n", "`r`n"), [System.Text.Encoding]::ASCII)
-  $overrideOut = & cmd /c "`"$probeOverride`""
-  $overrideText = ($overrideOut | Out-String)
-  if ($overrideText -notmatch 'REGISTRY=https://env-wins\.example/repository/npm/') {
-    throw "pre-set npm_config_registry should win over registry.env; output: $overrideText"
-  }
-  Write-Host '    registry.env + npmrc load OK (env override OK)'
-} finally {
-  if ($hadRegistryEnv) {
-    Set-Content -LiteralPath $RegistryEnvPath -Value $backupRegistryEnv -Encoding ascii -NoNewline
-  } elseif (Test-Path -LiteralPath $RegistryEnvPath) {
-    Remove-Item -LiteralPath $RegistryEnvPath -Force
-  }
-  if ($hadNpmrc) {
-    Set-Content -LiteralPath $NpmrcPath -Value $backupNpmrc -Encoding ascii -NoNewline
-  } elseif (Test-Path -LiteralPath $NpmrcPath) {
-    Remove-Item -LiteralPath $NpmrcPath -Force
-  }
-  foreach ($f in @($probeCmd, (Join-Path $probeDir 'smoke-registry-override.cmd'))) {
-    if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
-  }
+if ($Launcher -notmatch '(?im)^set "NARB_NATIVE_CACHE_DIR=%ROOT%\\data\\cache\\native-addons"\s*$') {
+  throw 'dsh.cmd must keep the native addon cache inside data\cache\native-addons'
 }
+$NpmrcExample = Join-Path $StageDir 'data\npmrc.example'
+if (-not (Test-Path -LiteralPath $NpmrcExample)) { throw "missing $NpmrcExample" }
 
 function Get-ProfileSnapshot {
   $paths = @(
@@ -136,7 +53,8 @@ function Get-ProfileSnapshot {
     (Join-Path $env:APPDATA 'npm-cache'),
     (Join-Path $env:LOCALAPPDATA 'npm-cache'),
     (Join-Path $env:LOCALAPPDATA 'pnpm'),
-    (Join-Path $env:LOCALAPPDATA 'pnpm-store')
+    (Join-Path $env:LOCALAPPDATA 'pnpm-store'),
+    (Join-Path $env:LOCALAPPDATA 'node-addon-native-custom-loader')
   )
   $snap = @{}
   foreach ($p in $paths) {
@@ -291,6 +209,12 @@ if (-not (Test-Path $WebProfile)) {
   }
 } else {
   Write-Host "    profiles\\web present"
+}
+
+$NativeCache = Join-Path $StageDir 'data\cache\native-addons'
+$NativeBinaries = @(Get-ChildItem -LiteralPath $NativeCache -Filter '*.node' -File -Recurse -ErrorAction SilentlyContinue)
+if ($NativeBinaries.Count -eq 0) {
+  throw 'portable native addon cache stayed empty after dsh startup'
 }
 
 $After = Get-ProfileSnapshot

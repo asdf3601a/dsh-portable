@@ -10,15 +10,11 @@ set "npm_config_cache=%ROOT%\data\cache\npm"
 set "npm_config_prefix=%ROOT%\data\cache\npm-prefix"
 set "PNPM_HOME=%ROOT%\data\cache\pnpm-home"
 set "npm_config_store_dir=%ROOT%\data\cache\pnpm-store"
+set "NARB_NATIVE_CACHE_DIR=%ROOT%\data\cache\native-addons"
 
-REM Optional Sonatype Nexus / npm registry (see data\npmrc.example and data\registry.env.example).
-REM Pre-set environment variables win over data\registry.env; npm_config_* also override data\npmrc.
-if exist "%ROOT%\data\registry.env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%\data\registry.env") do (
-    if not "%%A"=="" if not defined %%A set "%%A=%%B"
-  )
-)
-if exist "%ROOT%\data\npmrc" set "npm_config_userconfig=%ROOT%\data\npmrc"
+REM Optional Sonatype Nexus / npm registry (see data\npmrc.example).
+REM Pre-set npm_config_* environment variables override data\npmrc settings.
+if exist "%ROOT%\data\npmrc" if not defined npm_config_userconfig set "npm_config_userconfig=%ROOT%\data\npmrc"
 
 REM Optional: keep temp files inside the portable folder.
 REM Default is OFF - rely on the system TEMP cleanup.
