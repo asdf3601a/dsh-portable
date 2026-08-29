@@ -108,11 +108,11 @@ Native modules are installed on `windows-latest` so the tree is win32-x64.
 
 ## Releases follow upstream
 
-When [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) publishes a `dsh-v*` release tag (e.g. `dsh-v0.1.2-alpha.1` / title `v0.1.2-alpha.1`), GitHub Actions here builds and publishes a matching portable ZIP automatically — **no need to wait for npm**.
+Every Wednesday, GitHub Actions here builds a portable ZIP for the **latest** `dsh-v*` GitHub Release on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (e.g. `dsh-v0.1.2-alpha.1` / title `v0.1.2-alpha.1`) — **no need to wait for npm**. Older unpublished tags are not backfilled.
 
 If `@deepseek-ai/dsh@<ver>` is on the registry, the build uses it; otherwise it clones the Git tag, runs `pnpm run build:official` + official `release:pack` (dsh + vendor), then installs the packed tarballs into `app/`.
 
-Manual release: Actions → **release** → Run workflow → set `dsh_version` (e.g. `0.1.2-alpha.1`).
+Manual: Actions → **watch-upstream** (latest only) or **release** → Run workflow → set `dsh_version` (e.g. `0.1.2-alpha.1`) for a specific version.
 
 ## Build locally (Windows)
 

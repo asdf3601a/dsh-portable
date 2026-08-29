@@ -1,11 +1,12 @@
-# Resolve upstream deepseek-harness dsh-v* release tags that are not yet
-# published as a portable ZIP in this repository.
+# Resolve the newest upstream deepseek-harness dsh-v* GitHub Release that is
+# not yet published as a portable ZIP in this repository.
+# Never backfills older tags — one version or none.
 # Packaging clones the Git tag and runs official release:pack (npm optional).
 [CmdletBinding()]
 param(
   [string]$UpstreamRepo = 'deepseek-ai/deepseek-harness',
   [string]$ThisRepo = '',
-  [int]$PerPage = 20,
+  [int]$PerPage = 10,
   [switch]$Json
 )
 
@@ -26,31 +27,61 @@ function Get-GitHubHeaders {
   return $headers
 }
 
-function Get-PublishedPortableVersions([string]$Repo) {
-  $published = New-Object 'System.Collections.Generic.HashSet[string]'
-  if ($Repo -eq 'local/dsh-portable') {
-    # Unary comma prevents PowerShell from enumerating an empty HashSet to $null.
-    return , $published
+function Get-ErrorHttpStatus($ErrorRecord) {
+  $ex = $ErrorRecord.Exception
+  foreach ($candidate in @(
+      $ex.StatusCode,
+      $(if ($ex.Response) { $ex.Response.StatusCode }),
+      $(if ($ex.InnerException -and $ex.InnerException.Response) { $ex.InnerException.Response.StatusCode })
+    )) {
+    if ($null -eq $candidate) { continue }
+    try { return [int]$candidate } catch { }
   }
-  try {
-    $url = "https://api.github.com/repos/$Repo/releases?per_page=50"
-    $releases = @(Invoke-RestMethod -Uri $url -Headers (Get-GitHubHeaders))
-  } catch {
-    Write-Warning "could not list releases for $Repo : $_"
-    return , $published
-  }
-  foreach ($rel in $releases) {
-    if ($null -eq $rel) { continue }
-    foreach ($asset in @($rel.assets)) {
-      if ($asset.name -match '^dsh-portable-(.+)-win-x64\.zip$') {
-        [void]$published.Add($Matches[1])
-      }
-    }
-  }
-  return , $published
+  if ($ErrorRecord.Exception.Message -match '\b404\b') { return 404 }
+  return 0
 }
 
-Write-Host "==> scanning upstream releases: $UpstreamRepo"
+function Test-PortableAssetPublished([string]$Repo, [string]$Version) {
+  if ($Repo -eq 'local/dsh-portable') { return $false }
+  $tag = "dsh-v$Version"
+  $url = "https://api.github.com/repos/$Repo/releases/tags/$tag"
+  try {
+    $rel = Invoke-RestMethod -Uri $url -Headers (Get-GitHubHeaders)
+  } catch {
+    $code = Get-ErrorHttpStatus $_
+    if ($code -eq 404) { return $false }
+    Write-Warning "could not look up $Repo release $tag : $_"
+    return $false
+  }
+  $want = "dsh-portable-$Version-win-x64.zip"
+  foreach ($asset in @($rel.assets)) {
+    if ([string]$asset.name -eq $want) { return $true }
+  }
+  return $false
+}
+
+function Write-ResolverResult([bool]$HasPending, [string]$Version, $PendingObj) {
+  if ($Json) {
+    if ($HasPending -and $null -ne $PendingObj) {
+      ConvertTo-Json -InputObject $PendingObj -Compress -Depth 5
+    } else {
+      '[]'
+    }
+    return
+  }
+  if ($env:GITHUB_OUTPUT) {
+    if ($HasPending) {
+      "has_pending=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      "dsh_version=$Version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+    } else {
+      "has_pending=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      'dsh_version=' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+    }
+  }
+  if ($HasPending) { $Version }
+}
+
+Write-Host "==> scanning latest upstream releases: $UpstreamRepo"
 $upstreamUrl = "https://api.github.com/repos/$UpstreamRepo/releases?per_page=$PerPage"
 $raw = Invoke-RestMethod -Uri $upstreamUrl -Headers (Get-GitHubHeaders)
 # Copy into an explicit list so foreach never sees a nested Object[].
@@ -60,58 +91,43 @@ if ($raw -is [System.Array]) {
 } elseif ($null -ne $raw) {
   [void]$upstream.Add($raw)
 }
-$published = Get-PublishedPortableVersions $ThisRepo
 
-$pending = New-Object System.Collections.Generic.List[object]
-
-# Oldest-first; ISO-8601 strings sort lexicographically.
-$indices = 0..($upstream.Count - 1) | Sort-Object {
-  $rel = $upstream[$_]
-  $stamp = [string]$rel.published_at
-  if (-not $stamp) { $stamp = [string]$rel.created_at }
-  $stamp
-}
-
-foreach ($i in $indices) {
-  $rel = $upstream[$i]
+# GitHub returns newest first. Take the first dsh-v* only; do not paginate.
+$latest = $null
+$olderOnPage = 0
+foreach ($rel in $upstream) {
   if ($null -eq $rel) { continue }
   $tag = [string]$rel.tag_name
   if (-not $tag -or $tag -notmatch '^dsh-v(.+)$') { continue }
-  $ver = [string]$Matches[1]
-  if ($published.Contains($ver)) {
-    Write-Host "    skip $tag (already published here)"
+  if ($null -eq $latest) {
+    $latest = [pscustomobject]@{
+      tag          = $tag
+      version      = [string]$Matches[1]
+      html_url     = [string]$rel.html_url
+      published_at = [string]$rel.published_at
+    }
     continue
   }
-  Write-Host "    pending $tag"
-  [void]$pending.Add([pscustomobject]@{
-    tag          = $tag
-    version      = $ver
-    html_url     = [string]$rel.html_url
-    published_at = [string]$rel.published_at
-  })
+  $olderOnPage += 1
 }
 
-if ($Json) {
-  ConvertTo-Json -InputObject $pending.ToArray() -Compress -Depth 5
+if ($null -eq $latest) {
+  Write-Host '==> no dsh-v* GitHub Release on the newest page'
+  Write-ResolverResult -HasPending $false -Version '' -PendingObj $null
   return
 }
 
-if ($pending.Count -eq 0) {
+Write-Host "==> latest upstream $($latest.tag)"
+if ($olderOnPage -gt 0) {
+  Write-Host "    ignoring $olderOnPage older dsh-v* tag(s) on this page"
+}
+
+if (Test-PortableAssetPublished $ThisRepo $latest.version) {
+  Write-Host "    skip $($latest.tag) (already published here)"
   Write-Host '==> nothing to publish'
-  if ($env:GITHUB_OUTPUT) {
-    "has_pending=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-    'versions_json=[]' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-  }
+  Write-ResolverResult -HasPending $false -Version '' -PendingObj $null
   return
 }
 
-$versionList = [string[]]@($pending | ForEach-Object { $_.version })
-$versionsCsv = $versionList -join ','
-$versionsJson = ConvertTo-Json -InputObject $versionList -Compress
-Write-Host "==> pending versions: $versionsCsv"
-if ($env:GITHUB_OUTPUT) {
-  "has_pending=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-  "versions_json=$versionsJson" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-}
-
-$versionList
+Write-Host "    will publish $($latest.tag)"
+Write-ResolverResult -HasPending $true -Version $latest.version -PendingObj $latest
