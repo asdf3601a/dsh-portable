@@ -24,39 +24,53 @@ Portable data (stays in this folder)
   data\dsh-home\     settings, credentials, sessions, plugins  (DSH_HOME)
   data\workspace\    default working directory
   data\cache\        npm, pnpm, and runtime native addon caches
-  data\npmrc         optional npm/pnpm userconfig (copy from npmrc.example)
-  data\portable.env  feature switches (SHELL=pwsh or SHELL=bash)
+  data\portable.env  feature switches (shell, proxy, npm registry)
+  data\npmrc         optional legacy npm/pnpm userconfig (multi-registry)
 
 These files do NOT go to %USERPROFILE%\.dsh.
 Copy the whole folder to another PC / USB drive to take your environment with you.
 Prefer NTFS for USB drives that store API keys.
 
-Optional Nexus / npm registry
------------------------------
-By default npm and pnpm use the public registry. To point them at a Sonatype Nexus
-npm group/proxy (or any registry):
-
-1. Copy data\npmrc.example to data\npmrc, then edit (no spaces around '=').
-2. Restart dsh (close the console running start.cmd, then start again).
-
-Precedence: process env (e.g. npm_config_registry) > data\npmrc > npm defaults.
-Use data\npmrc for //host/:_authToken= style auth. Leave it absent to keep the
-default public registry.
+Edit data\portable.env (KEY=value, no spaces around '='), then restart start.cmd.
+A variable already set in the parent console wins over this file.
 
 Git and shell
 -------------
 Bundled Git is always first on PATH (runtime\git\cmd\git.exe). System Git is
 not used unless you remove the bundled copy.
 
-The agent shell defaults to pwsh. To use Git Bash instead, edit
-data\portable.env (copy from portable.env.example if needed):
+The agent shell defaults to pwsh. To use Git Bash instead, set:
 
   SHELL=bash
 
-then restart start.cmd. Git config is data\dsh-home\gitconfig. SSH keys still
-come from %USERPROFILE%\.ssh unless you set HOME yourself.
+Git config is data\dsh-home\gitconfig. SSH keys still come from
+%USERPROFILE%\.ssh unless you set HOME yourself.
 
 To open Git Bash: runtime\git\git-bash.exe
+
+HTTP(S) / SOCKS proxy
+---------------------
+  PROXY=http://proxy.example.com:8080
+
+PROXY fills HTTP_PROXY and HTTPS_PROXY when those keys are omitted.
+ALL_PROXY=socks5://host:port is for git and Git Bash curl only; Node and
+npm/pnpm do not honor SOCKS. When an HTTP(S) proxy is set, loopback is
+bypassed unless you set NO_PROXY yourself.
+
+Corporate MITM CA:
+
+  NODE_EXTRA_CA_CERTS=data\certs\corp.pem
+
+Optional Nexus / npm registry
+-----------------------------
+By default npm and pnpm use the public registry. For a single private registry:
+
+  NPM_REGISTRY=https://nexus.example.com/repository/npm-group/
+  NPM_ALWAYS_AUTH=true
+  NPM_AUTH_TOKEN=YOUR_TOKEN_HERE
+
+Precedence: process env (e.g. npm_config_registry) > data\npmrc if present >
+portable.env NPM_* > npm defaults. Keep data\npmrc only for multiple registries.
 
 Temp files
 ----------

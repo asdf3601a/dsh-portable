@@ -421,7 +421,6 @@ foreach ($rel in @(
 )) {
   New-Item -ItemType Directory -Force -Path (Join-Path $Stage $rel) | Out-Null
 }
-Copy-Item (Join-Path $Root 'packaging\npmrc.example') (Join-Path $Stage 'data\npmrc.example') -Force
 Copy-Item (Join-Path $Root 'packaging\portable.env.example') (Join-Path $Stage 'data\portable.env.example') -Force
 $PortableEnv = Join-Path $Stage 'data\portable.env'
 if (-not (Test-Path -LiteralPath $PortableEnv)) {

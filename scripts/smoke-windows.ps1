@@ -45,7 +45,28 @@ if ($Launcher -notmatch '(?im)^rem set "TMP=%ROOT%\\data\\tmp"\s*$') {
 if ($Launcher -match '(?im)^set "TEMP=%ROOT%\\data\\tmp"\s*$' -or $Launcher -match '(?im)^set "TMP=%ROOT%\\data\\tmp"\s*$') {
   throw 'dsh.cmd must not enable TMP/TEMP redirection by default'
 }
-if ($Launcher -notmatch '(?im)^if exist "%ROOT%\\data\\npmrc" if not defined npm_config_userconfig set "npm_config_userconfig=%ROOT%\\data\\npmrc"\s*$') {
+if ($Launcher -notmatch '(?im)for /f "usebackq eol=# tokens=1,\* delims==" %%A in \("%ROOT%\\data\\portable\.env"\)') {
+  throw 'dsh.cmd must parse data\portable.env with a KEY=value for /f loop'
+}
+foreach ($key in @('SHELL', 'PROXY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'NPM_REGISTRY', 'NPM_ALWAYS_AUTH', 'NPM_AUTH_TOKEN', 'NODE_EXTRA_CA_CERTS')) {
+  $keyPattern = '(?im)if /I "%%A"=="' + [regex]::Escape($key) + '"'
+  if ($Launcher -notmatch $keyPattern) {
+    throw "dsh.cmd must read $key from data\portable.env"
+  }
+}
+if ($Launcher -notmatch '(?im)set "NODE_USE_ENV_PROXY=1"') {
+  throw 'dsh.cmd must set NODE_USE_ENV_PROXY when an HTTP(S) proxy is applied'
+}
+if ($Launcher -notmatch '(?im)NO_PROXY=localhost,127\.0\.0\.1,::1') {
+  throw 'dsh.cmd must default NO_PROXY to loopback when an HTTP(S) proxy is set'
+}
+if ($Launcher -notmatch '(?im)data\\cache\\generated\.npmrc') {
+  throw 'dsh.cmd must write data\cache\generated.npmrc from NPM_REGISTRY / NPM_AUTH_TOKEN'
+}
+if ($Launcher -notmatch '(?im)if exist "%ROOT%\\data\\npmrc"') {
+  throw 'dsh.cmd must still honor a legacy data\npmrc userconfig'
+}
+if ($Launcher -notmatch '(?im)npm_config_userconfig=%ROOT%\\data\\npmrc') {
   throw 'dsh.cmd must optionally set npm_config_userconfig from data\npmrc'
 }
 if ($Launcher -notmatch '(?im)^set "NARB_NATIVE_CACHE_DIR=%ROOT%\\data\\cache\\native-addons"\s*$') {
@@ -64,9 +85,18 @@ if ($Launcher -notmatch '(?im)web --patch "%PATCH%"') {
   throw 'dsh.cmd must pass the portable shell overlay as web --patch'
 }
 $NpmrcExample = Join-Path $StageDir 'data\npmrc.example'
-if (-not (Test-Path -LiteralPath $NpmrcExample)) { throw "missing $NpmrcExample" }
+if (Test-Path -LiteralPath $NpmrcExample) { throw "npmrc.example must not be staged; npm settings live in portable.env" }
 $PortableEnvExample = Join-Path $StageDir 'data\portable.env.example'
 if (-not (Test-Path -LiteralPath $PortableEnvExample)) { throw "missing $PortableEnvExample" }
+$PortableEnvExampleText = Get-Content -LiteralPath $PortableEnvExample -Raw
+if ($PortableEnvExampleText -notmatch '(?m)^SHELL=pwsh\s*$') {
+  throw 'portable.env.example must default SHELL=pwsh'
+}
+foreach ($needle in @('(?m)^# PROXY=', '(?m)^# ALL_PROXY=', '(?m)^# NPM_REGISTRY=', '(?m)^# NPM_AUTH_TOKEN=', '(?m)^# NODE_EXTRA_CA_CERTS=')) {
+  if ($PortableEnvExampleText -notmatch $needle) {
+    throw "portable.env.example must document $needle"
+  }
+}
 
 function Get-ProfileSnapshot {
   $paths = @(
@@ -200,12 +230,53 @@ try {
   if ($DumpBashText -notmatch 'DSH_SHELL') {
     throw 'SHELL=bash dump-config must still include the portable shell overlay'
   }
+
+  $GeneratedNpmrc = Join-Path $StageDir 'data\cache\generated.npmrc'
+  if (Test-Path -LiteralPath $GeneratedNpmrc) { Remove-Item -LiteralPath $GeneratedNpmrc -Force }
+  Set-Content -Path $PortableEnv -Value @(
+    'SHELL=pwsh'
+    'HTTP_PROXY=http://127.0.0.1:9'
+    'NPM_REGISTRY=https://nexus.example.com/repository/npm-group/'
+    'NPM_ALWAYS_AUTH=true'
+    'NPM_AUTH_TOKEN=smoke-token'
+  ) -Encoding ascii
+  Write-Host '==> dsh --version (portable.env HTTP_PROXY + NPM_*)'
+  $VerProxy = & cmd /c "`"$DshCmd`" --version"
+  if ($LASTEXITCODE -ne 0) {
+    throw "dsh --version with HTTP_PROXY/NPM_* portable.env failed with exit code $LASTEXITCODE"
+  }
+  $VerProxy = ("$VerProxy").Trim()
+  if ($ExpectedDshVersion -and $VerProxy -ne $ExpectedDshVersion) {
+    throw "dsh --version '$VerProxy' != expected '$ExpectedDshVersion' under HTTP_PROXY/NPM_*"
+  }
+  if (-not (Test-Path -LiteralPath $GeneratedNpmrc)) {
+    throw 'NPM_AUTH_TOKEN must write data\cache\generated.npmrc'
+  }
+  $GeneratedText = Get-Content -LiteralPath $GeneratedNpmrc -Raw
+  if ($GeneratedText -notmatch '(?m)^registry=https://nexus\.example\.com/repository/npm-group/$') {
+    throw 'generated.npmrc must contain the NPM_REGISTRY value'
+  }
+  if ($GeneratedText -notmatch '(?m)^always-auth=true$') {
+    throw 'generated.npmrc must contain always-auth from NPM_ALWAYS_AUTH'
+  }
+  if ($GeneratedText -notmatch '(?m)^//nexus\.example\.com/repository/npm-group/:_authToken=smoke-token$') {
+    throw 'generated.npmrc must contain a host-scoped _authToken'
+  }
+  Write-Host '    generated.npmrc OK'
+  Write-Host '==> dsh web --dump-config (HTTP_PROXY loopback + default NO_PROXY)'
+  $DumpProxy = & cmd /c "`"$DshCmd`" web --dump-config 2>&1"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host ($DumpProxy | Out-String)
+    throw "dsh web --dump-config with HTTP_PROXY=127.0.0.1:9 failed with exit code $LASTEXITCODE"
+  }
 } finally {
   if ($null -ne $PortableEnvBackup) {
     Set-Content -Path $PortableEnv -Value $PortableEnvBackup -Encoding ascii -NoNewline
   } elseif (Test-Path -LiteralPath $PortableEnv) {
     Remove-Item -LiteralPath $PortableEnv -Force
   }
+  $GeneratedNpmrc = Join-Path $StageDir 'data\cache\generated.npmrc'
+  if (Test-Path -LiteralPath $GeneratedNpmrc) { Remove-Item -LiteralPath $GeneratedNpmrc -Force }
 }
 
 # --- web HTTP probe ---
