@@ -328,6 +328,8 @@ foreach ($rel in @(
 )) {
   New-Item -ItemType Directory -Force -Path (Join-Path $Stage $rel) | Out-Null
 }
+Copy-Item (Join-Path $Root 'packaging\npmrc.example') (Join-Path $Stage 'data\npmrc.example') -Force
+Copy-Item (Join-Path $Root 'packaging\registry.env.example') (Join-Path $Stage 'data\registry.env.example') -Force
 @(
   'data\dsh-home\.keep',
   'data\workspace\.keep',

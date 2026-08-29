@@ -1,0 +1,16 @@
+# Optional portable npm userconfig for Sonatype Nexus (or any npm registry).
+# Copy this file to data\npmrc and edit. dsh.cmd loads it only when data\npmrc exists.
+# Environment variables such as npm_config_registry override values in this file.
+#
+# Do not put spaces around '='. Keep secrets in data\ so they travel with the portable folder.
+
+# Sonatype Nexus npm group / proxy example:
+# registry=https://nexus.example.com/repository/npm-group/
+# always-auth=true
+
+# Token auth (preferred when Nexus issues a user token):
+# //nexus.example.com/repository/npm-group/:_authToken=YOUR_TOKEN_HERE
+
+# Basic auth (password must be base64-encoded):
+# //nexus.example.com/repository/npm-group/:username=myuser
+# //nexus.example.com/repository/npm-group/:_password=BASE64_PASSWORD_HERE

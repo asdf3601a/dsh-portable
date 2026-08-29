@@ -11,6 +11,15 @@ set "npm_config_prefix=%ROOT%\data\cache\npm-prefix"
 set "PNPM_HOME=%ROOT%\data\cache\pnpm-home"
 set "npm_config_store_dir=%ROOT%\data\cache\pnpm-store"
 
+REM Optional Sonatype Nexus / npm registry (see data\npmrc.example and data\registry.env.example).
+REM Pre-set environment variables win over data\registry.env; npm_config_* also override data\npmrc.
+if exist "%ROOT%\data\registry.env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%\data\registry.env") do (
+    if not "%%A"=="" if not defined %%A set "%%A=%%B"
+  )
+)
+if exist "%ROOT%\data\npmrc" set "npm_config_userconfig=%ROOT%\data\npmrc"
+
 REM Optional: keep temp files inside the portable folder.
 REM Default is OFF - rely on the system TEMP cleanup.
 REM set "TEMP=%ROOT%\data\tmp"
