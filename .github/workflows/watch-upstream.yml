@@ -17,7 +17,7 @@ jobs:
       has_pending: ${{ steps.resolve.outputs.has_pending }}
       versions_json: ${{ steps.resolve.outputs.versions_json }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve pending upstream versions
         id: resolve

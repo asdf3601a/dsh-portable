@@ -25,7 +25,7 @@ jobs:
       group: dsh-portable-release-${{ inputs.dsh_version }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Skip if release asset already exists
         id: gate
@@ -77,7 +77,7 @@ jobs:
             -StageDir (Join-Path $extract 'dsh-portable') `
             -ExpectedDshVersion $env:DSH_VERSION
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.gate.outputs.skip != 'true'
         with:
           name: dsh-portable-${{ inputs.dsh_version }}-win-x64
