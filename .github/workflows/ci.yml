@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve dsh version (npm latest / fallback)
+      - name: Resolve dsh version (latest upstream dsh-v* / fallback)
         id: ver
         shell: pwsh
         run: |
@@ -23,18 +23,28 @@ jobs:
           foreach ($line in Get-Content versions.env) {
             if ($line -match '^DSH_VERSION_FALLBACK=(.+)$') { $fallback = $Matches[1]; break }
           }
+          $ver = $fallback
           try {
-            $latest = (Invoke-RestMethod https://registry.npmjs.org/@deepseek-ai/dsh/latest).version
+            $rels = Invoke-RestMethod 'https://api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=10' -Headers @{
+              'User-Agent' = 'dsh-portable-ci'
+              'Accept' = 'application/vnd.github+json'
+            }
+            foreach ($rel in $rels) {
+              if ($rel.tag_name -match '^dsh-v(.+)$') { $ver = $Matches[1]; break }
+            }
           } catch {
-            $latest = $fallback
+            Write-Warning "could not list upstream releases; using fallback $fallback"
           }
-          if (-not $latest) { $latest = $fallback }
-          Write-Host "Using DSH_VERSION=$latest"
-          "dsh_version=$latest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $ver) { $ver = $fallback }
+          Write-Host "Using DSH_VERSION=$ver (upstream tag dsh-v$ver)"
+          "dsh_version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Build portable ZIP
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -DshVersion '${{ steps.ver.outputs.dsh_version }}'
+        run: |
+          ./scripts/build-windows.ps1 `
+            -DshVersion '${{ steps.ver.outputs.dsh_version }}' `
+            -Source auto
 
       - name: Smoke test
         shell: pwsh

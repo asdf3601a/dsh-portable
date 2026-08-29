@@ -46,7 +46,7 @@ rem set "TMP=%ROOT%\data\tmp"
 ## What gets bundled
 
 - Official Node.js **win-x64** zip (SHA-256 verified from nodejs.org)
-- Official `@deepseek-ai/dsh` from npm (unmodified)
+- Official DeepSeek Harness from Git tag `dsh-v*` via upstream `release:pack` (or npm when that version is already published)
 - Official **pnpm** Windows binary (for `dsh plugin`)
 - Launchers: `dsh.cmd`, `start.cmd`
 
@@ -54,18 +54,23 @@ Native modules are installed on `windows-latest` so the tree is win32-x64.
 
 ## Releases follow upstream
 
-When [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) publishes a `dsh-v*` release tag **and** that version is available on npm, GitHub Actions here builds and publishes a matching portable ZIP automatically.
+When [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) publishes a `dsh-v*` release tag (e.g. `dsh-v0.1.2-alpha.1` / title `v0.1.2-alpha.1`), GitHub Actions here builds and publishes a matching portable ZIP automatically — **no need to wait for npm**.
 
-Manual release: Actions → **release** → Run workflow → set `dsh_version`.
+If `@deepseek-ai/dsh@<ver>` is on the registry, the build uses it; otherwise it clones the Git tag, runs `pnpm run build:official` + official `release:pack` (dsh + vendor), then installs the packed tarballs into `app/`.
+
+Manual release: Actions → **release** → Run workflow → set `dsh_version` (e.g. `0.1.2-alpha.1`).
 
 ## Build locally (Windows)
 
 ```powershell
-pwsh -File .\scripts\build-windows.ps1 -DshVersion 0.1.1-rc.2
-pwsh -File .\scripts\smoke-windows.ps1 -StageDir .\build\stage\dsh-portable
+# Force git-tag pack (needed when the version is not on npm yet)
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -DshVersion 0.1.2-alpha.1 -Source git
+
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-windows.ps1 `
+  -StageDir .\build\win-x64\dsh-portable -ExpectedDshVersion 0.1.2-alpha.1
 ```
 
-Artifacts land in `dist\`.
+Artifacts land in `dist\`. The git-pack path requires **git** on PATH.
 
 ## License
 

@@ -5,7 +5,8 @@ This project is NOT affiliated with, endorsed by, or sponsored by DeepSeek.
 
 It redistributes, without modification:
 
-  • @deepseek-ai/dsh          MIT License — https://github.com/deepseek-ai/deepseek-harness
+  • DeepSeek Harness (dsh)    MIT License — from upstream Git tag dsh-v* / npm
+                              https://github.com/deepseek-ai/deepseek-harness
   • Node.js                   Node.js license — https://github.com/nodejs/node/blob/main/LICENSE
   • pnpm                      MIT License — https://github.com/pnpm/pnpm
 

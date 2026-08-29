@@ -150,12 +150,23 @@ function Show-WebLogs {
 try {
   $deadline = (Get-Date).AddSeconds($WebTimeoutSec)
   $ok = $false
+  $probeUrl = "http://127.0.0.1:$WebPort/"
   while ((Get-Date) -lt $deadline) {
+    # Newer dsh builds print a one-time token URL (required for browser trust).
+    if (Test-Path $WebOut) {
+      $outText = Get-Content -LiteralPath $WebOut -Raw -ErrorAction SilentlyContinue
+      $urlPattern = "https?://127\.0\.0\.1:$WebPort/\S*"
+      if ($outText -match $urlPattern) {
+        $probeUrl = $Matches[0].Trim()
+      } elseif ($outText -match 'token=([A-Za-z0-9._\-]+)') {
+        $probeUrl = "http://127.0.0.1:$WebPort/?token=$($Matches[1])"
+      }
+    }
     try {
-      $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" -UseBasicParsing -TimeoutSec 3
+      $resp = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 3
       if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
         $ok = $true
-        Write-Host "    HTTP $($resp.StatusCode)"
+        Write-Host "    HTTP $($resp.StatusCode) ($probeUrl)"
         break
       }
     } catch {

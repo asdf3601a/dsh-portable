@@ -1,5 +1,6 @@
-# Resolve upstream deepseek-harness dsh-v* release tags that are on npm
-# and not yet published as a portable ZIP in this repository.
+# Resolve upstream deepseek-harness dsh-v* release tags that are not yet
+# published as a portable ZIP in this repository.
+# Packaging clones the Git tag and runs official release:pack (npm optional).
 [CmdletBinding()]
 param(
   [string]$UpstreamRepo = 'deepseek-ai/deepseek-harness',
@@ -15,17 +16,14 @@ if (-not $ThisRepo) {
   else { $ThisRepo = 'local/dsh-portable' }
 }
 
-function Invoke-GhApi([string]$Path) {
-  if (Get-Command gh -ErrorAction SilentlyContinue) {
-    $out = & gh api $Path
-    if ($LASTEXITCODE -ne 0) { throw "gh api $Path failed" }
-    return ($out | ConvertFrom-Json)
-  }
-  $url = "https://api.github.com/$Path"
-  return Invoke-RestMethod -Uri $url -Headers @{
+function Get-GitHubHeaders {
+  $headers = @{
     'User-Agent' = 'dsh-portable-resolver'
     'Accept'     = 'application/vnd.github+json'
   }
+  if ($env:GH_TOKEN) { $headers['Authorization'] = "Bearer $($env:GH_TOKEN)" }
+  elseif ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
+  return $headers
 }
 
 function Test-NpmPackage([string]$Version) {
@@ -39,53 +37,74 @@ function Test-NpmPackage([string]$Version) {
 
 function Get-PublishedPortableVersions([string]$Repo) {
   $published = New-Object 'System.Collections.Generic.HashSet[string]'
-  if ($Repo -eq 'local/dsh-portable') { return $published }
+  if ($Repo -eq 'local/dsh-portable') {
+    # Unary comma prevents PowerShell from enumerating an empty HashSet to $null.
+    return , $published
+  }
   try {
-    $releases = Invoke-GhApi "repos/$Repo/releases?per_page=50"
+    $url = "https://api.github.com/repos/$Repo/releases?per_page=50"
+    $releases = @(Invoke-RestMethod -Uri $url -Headers (Get-GitHubHeaders))
   } catch {
     Write-Warning "could not list releases for $Repo : $_"
-    return $published
+    return , $published
   }
   foreach ($rel in $releases) {
+    if ($null -eq $rel) { continue }
     foreach ($asset in @($rel.assets)) {
       if ($asset.name -match '^dsh-portable-(.+)-win-x64\.zip$') {
         [void]$published.Add($Matches[1])
       }
     }
-    if ($rel.tag_name -match '^dsh-v(.+)$') {
+    $tagName = [string]$rel.tag_name
+    if ($tagName -match '^dsh-v(.+)$') {
       [void]$published.Add($Matches[1])
     }
   }
-  return $published
+  return , $published
 }
 
 Write-Host "==> scanning upstream releases: $UpstreamRepo"
-$upstream = Invoke-GhApi "repos/$UpstreamRepo/releases?per_page=$PerPage"
+$upstreamUrl = "https://api.github.com/repos/$UpstreamRepo/releases?per_page=$PerPage"
+$raw = Invoke-RestMethod -Uri $upstreamUrl -Headers (Get-GitHubHeaders)
+# Copy into an explicit list so foreach never sees a nested Object[].
+$upstream = New-Object System.Collections.Generic.List[object]
+if ($raw -is [System.Array]) {
+  foreach ($item in $raw) { [void]$upstream.Add($item) }
+} elseif ($null -ne $raw) {
+  [void]$upstream.Add($raw)
+}
 $published = Get-PublishedPortableVersions $ThisRepo
 
-$pending = @()
-# Process oldest-first among the fetched page so we publish in order.
-$ordered = @($upstream | Sort-Object { $_.published_at }, { $_.created_at })
+$pending = New-Object System.Collections.Generic.List[object]
 
-foreach ($rel in $ordered) {
+# Oldest-first; ISO-8601 strings sort lexicographically.
+$indices = 0..($upstream.Count - 1) | Sort-Object {
+  $rel = $upstream[$_]
+  $stamp = [string]$rel.published_at
+  if (-not $stamp) { $stamp = [string]$rel.created_at }
+  $stamp
+}
+
+foreach ($i in $indices) {
+  $rel = $upstream[$i]
+  if ($null -eq $rel) { continue }
   $tag = [string]$rel.tag_name
-  if ($tag -notmatch '^dsh-v(.+)$') { continue }
-  $ver = $Matches[1]
+  if (-not $tag -or $tag -notmatch '^dsh-v(.+)$') { continue }
+  $ver = [string]$Matches[1]
   if ($published.Contains($ver)) {
     Write-Host "    skip $tag (already published here)"
     continue
   }
-  if (-not (Test-NpmPackage $ver)) {
-    Write-Host "    skip $tag (not on npm yet)"
-    continue
-  }
-  Write-Host "    pending $tag -> npm @$ver"
-  $pending += [pscustomobject]@{
-    tag         = $tag
-    version     = $ver
-    html_url    = $rel.html_url
-    published_at = $rel.published_at
-  }
+  $onNpm = Test-NpmPackage $ver
+  $source = if ($onNpm) { 'npm-or-git' } else { 'git-tag' }
+  Write-Host "    pending $tag ($source)"
+  [void]$pending.Add([pscustomobject]@{
+    tag          = $tag
+    version      = $ver
+    html_url     = [string]$rel.html_url
+    published_at = [string]$rel.published_at
+    on_npm       = $onNpm
+  })
 }
 
 if ($Json) {
@@ -105,7 +124,6 @@ if ($pending.Count -eq 0) {
 
 $versionList = [string[]]@($pending | ForEach-Object { $_.version })
 $versionsCsv = $versionList -join ','
-# -InputObject keeps a single-element array as JSON array (no pipe unwrap).
 $versionsJson = ConvertTo-Json -InputObject $versionList -Compress
 Write-Host "==> pending versions: $versionsCsv"
 if ($env:GITHUB_OUTPUT) {
@@ -114,5 +132,4 @@ if ($env:GITHUB_OUTPUT) {
   "versions_json=$versionsJson" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 }
 
-# Also emit one version per line for shell loops.
 $versionList

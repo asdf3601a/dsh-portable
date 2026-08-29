@@ -24,18 +24,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify npm package exists
+      - name: Resolve package source
+        id: source
         shell: pwsh
         run: |
           $ver = '${{ inputs.dsh_version }}'
           if (-not $ver) { throw 'dsh_version input is required' }
+          $onNpm = $false
           try {
             $got = (Invoke-RestMethod "https://registry.npmjs.org/@deepseek-ai/dsh/$ver").version
-          } catch {
-            throw "@deepseek-ai/dsh@$ver is not on npm yet"
+            if ($got -eq $ver) { $onNpm = $true }
+          } catch { $onNpm = $false }
+          if ($onNpm) {
+            Write-Host "npm has @deepseek-ai/dsh@$ver — will prefer registry (auto)"
+            "mode=auto" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Host "npm missing @deepseek-ai/dsh@$ver — will clone git tag dsh-v$ver + release:pack"
+            "mode=git" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
-          if ($got -ne $ver) { throw "npm returned '$got' for requested '$ver'" }
-          Write-Host "npm OK: @deepseek-ai/dsh@$got"
 
       - name: Skip if release asset already exists
         id: gate
@@ -63,7 +69,10 @@ jobs:
       - name: Build portable ZIP
         if: steps.gate.outputs.skip != 'true'
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -DshVersion '${{ inputs.dsh_version }}'
+        run: |
+          ./scripts/build-windows.ps1 `
+            -DshVersion '${{ inputs.dsh_version }}' `
+            -Source '${{ steps.source.outputs.mode }}'
 
       - name: Smoke test
         if: steps.gate.outputs.skip != 'true'
@@ -101,7 +110,7 @@ jobs:
           $notes = @"
           Unofficial Windows 11 x64 portable build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ``dsh@$ver``.
 
-          **Not affiliated with DeepSeek.** Bundles unmodified ``@deepseek-ai/dsh``, official Node.js v$node, and pnpm v$pnpm.
+          **Not affiliated with DeepSeek.** Bundles DeepSeek Harness from upstream tag ``$tag`` (npm when published, otherwise official ``release:pack``), official Node.js v$node, and pnpm v$pnpm.
 
           Upstream tag: https://github.com/deepseek-ai/deepseek-harness/releases/tag/$tag
 
