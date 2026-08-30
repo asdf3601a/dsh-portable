@@ -6,7 +6,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "DSH_PORTABLE_ROOT=%ROOT%"
 set "DSH_HOME=%ROOT%\data\dsh-home"
-set "DSH_SHELL=pwsh"
+set "_P_SHELL="
 set "_P_PROXY="
 set "_P_PROXY_OK="
 set "_P_HTTP_PROXY="
@@ -20,7 +20,7 @@ set "_P_NODE_EXTRA_CA_CERTS="
 set "_HAS_PROXY="
 if exist "%ROOT%\data\portable.env" (
   for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%\data\portable.env") do (
-    if /I "%%A"=="SHELL" if not "%%B"=="" set "DSH_SHELL=%%B"
+    if /I "%%A"=="SHELL" if not "%%B"=="" set "_P_SHELL=%%B"
     if /I "%%A"=="PROXY" if not "%%B"=="" set "_P_PROXY=%%B"
     if /I "%%A"=="HTTP_PROXY" if not "%%B"=="" set "_P_HTTP_PROXY=%%B"
     if /I "%%A"=="HTTPS_PROXY" if not "%%B"=="" set "_P_HTTPS_PROXY=%%B"
@@ -32,6 +32,7 @@ if exist "%ROOT%\data\portable.env" (
     if /I "%%A"=="NODE_EXTRA_CA_CERTS" if not "%%B"=="" set "_P_NODE_EXTRA_CA_CERTS=%%B"
   )
 )
+if not defined DSH_SHELL if defined _P_SHELL set "DSH_SHELL=%_P_SHELL%"
 if /I not "%DSH_SHELL%"=="bash" set "DSH_SHELL=pwsh"
 
 if not defined _P_PROXY goto :proxy_scheme_done
@@ -108,7 +109,8 @@ if not exist "%ROOT%\data\cache\pnpm-store" mkdir "%ROOT%\data\cache\pnpm-store"
 set "NODE_EXE=%ROOT%\runtime\node\node.exe"
 set "DSH_BIN=%ROOT%\app\node_modules\@deepseek-ai\dsh\lib\bin.js"
 set "GIT_EXE=%ROOT%\runtime\git\cmd\git.exe"
-set "PATCH=%ROOT%\runtime\portable\shell.cordis.yml"
+set "DSH_PORTABLE_PATCH=%ROOT%\runtime\portable\shell.cordis.yml"
+set "DSH_PORTABLE_ARGV=%ROOT%\runtime\portable\argv.cjs"
 
 if not exist "%NODE_EXE%" (
   echo [dsh-portable] Bundled Node.js not found: "%NODE_EXE%"
@@ -120,6 +122,14 @@ if not exist "%DSH_BIN%" (
 )
 if not exist "%GIT_EXE%" (
   echo [dsh-portable] Bundled Git not found: "%GIT_EXE%"
+  exit /b 1
+)
+if not exist "%DSH_PORTABLE_PATCH%" (
+  echo [dsh-portable] Portable shell overlay not found: "%DSH_PORTABLE_PATCH%"
+  exit /b 1
+)
+if not exist "%DSH_PORTABLE_ARGV%" (
+  echo [dsh-portable] Portable argument preload not found: "%DSH_PORTABLE_ARGV%"
   exit /b 1
 )
 
@@ -143,6 +153,7 @@ set "DSH_GEN_NPM_ALWAYS_AUTH="
 set "DSH_GEN_NPMRC="
 :npm_gen_done
 
+set "_P_SHELL="
 set "_P_PROXY="
 set "_P_PROXY_OK="
 set "_P_HTTP_PROXY="
@@ -156,13 +167,5 @@ set "_P_NODE_EXTRA_CA_CERTS="
 set "_HAS_PROXY="
 
 cd /d "%ROOT%\data\workspace"
-if /I "%~1"=="web" (
-  if exist "%PATCH%" (
-    "%NODE_EXE%" "%DSH_BIN%" web --patch "%PATCH%" %2 %3 %4 %5 %6 %7 %8 %9
-  ) else (
-    "%NODE_EXE%" "%DSH_BIN%" web %2 %3 %4 %5 %6 %7 %8 %9
-  )
-  exit /b %ERRORLEVEL%
-)
-"%NODE_EXE%" "%DSH_BIN%" %*
+"%NODE_EXE%" --require "%DSH_PORTABLE_ARGV%" "%DSH_BIN%" %*
 exit /b %ERRORLEVEL%

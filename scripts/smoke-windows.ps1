@@ -21,6 +21,7 @@ $PnpmExe = Join-Path $StageDir 'runtime\pnpm\pnpm.exe'
 $GitExe = Join-Path $StageDir 'runtime\git\cmd\git.exe'
 $BashExe = Join-Path $StageDir 'runtime\git\usr\bin\bash.exe'
 $ShellOverlay = Join-Path $StageDir 'runtime\portable\shell.cordis.yml'
+$ArgvPreload = Join-Path $StageDir 'runtime\portable\argv.cjs'
 $PortablePreset = Join-Path $StageDir 'runtime\portable\presets\portable\agent.cordis.yml'
 
 Write-Host "==> smoke: $StageDir"
@@ -32,6 +33,7 @@ if (-not (Test-Path $PnpmExe)) { throw "missing bundled pnpm.exe" }
 if (-not (Test-Path $GitExe)) { throw "missing bundled git.exe" }
 if (-not (Test-Path $BashExe)) { throw "missing bundled Git Bash (usr\bin\bash.exe)" }
 if (-not (Test-Path $ShellOverlay)) { throw "missing shell overlay: $ShellOverlay" }
+if (-not (Test-Path $ArgvPreload)) { throw "missing argument preload: $ArgvPreload" }
 if (-not (Test-Path $PortablePreset)) { throw "missing portable preset: $PortablePreset" }
 
 # TMP/TEMP redirection must remain commented out by default.
@@ -53,6 +55,9 @@ foreach ($key in @('SHELL', 'PROXY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', '
   if ($Launcher -notmatch $keyPattern) {
     throw "dsh.cmd must read $key from data\portable.env"
   }
+}
+if ($Launcher -notmatch '(?im)^if not defined DSH_SHELL if defined _P_SHELL set "DSH_SHELL=%_P_SHELL%"\s*$') {
+  throw 'dsh.cmd must let parent DSH_SHELL override portable.env SHELL'
 }
 if ($Launcher -notmatch '(?im)set "NODE_USE_ENV_PROXY=1"') {
   throw 'dsh.cmd must set NODE_USE_ENV_PROXY when an HTTP(S) proxy is applied'
@@ -81,8 +86,17 @@ if ($Launcher -notmatch '(?im)^set "GIT_CONFIG_GLOBAL=%ROOT%\\data\\dsh-home\\gi
 if ($Launcher -notmatch '(?im)runtime\\git\\cmd') {
   throw 'dsh.cmd must prepend bundled runtime\git\cmd to PATH'
 }
-if ($Launcher -notmatch '(?im)web --patch "%PATCH%"') {
-  throw 'dsh.cmd must pass the portable shell overlay as web --patch'
+if ($Launcher -notmatch '(?im)^"%NODE_EXE%" --require "%DSH_PORTABLE_ARGV%" "%DSH_BIN%" %\*\s*$') {
+  throw 'dsh.cmd must preload portable argv handling and forward the complete %*'
+}
+if ($Launcher -match '(?im)%[2-9]\b') {
+  throw 'dsh.cmd must not truncate arguments by forwarding only %2 through %9'
+}
+$ArgvText = Get-Content -LiteralPath $ArgvPreload -Raw
+foreach ($needle in @("first === 'web'", "first !== 'plugin'", "args.includes('--dump-default-config')", "arg === '--profile'")) {
+  if (-not $ArgvText.Contains($needle)) {
+    throw "argv.cjs must handle $needle"
+  }
 }
 $NpmrcExample = Join-Path $StageDir 'data\npmrc.example'
 if (Test-Path -LiteralPath $NpmrcExample) { throw "npmrc.example must not be staged; npm settings live in portable.env" }
@@ -91,6 +105,9 @@ if (-not (Test-Path -LiteralPath $PortableEnvExample)) { throw "missing $Portabl
 $PortableEnvExampleText = Get-Content -LiteralPath $PortableEnvExample -Raw
 if ($PortableEnvExampleText -notmatch '(?m)^SHELL=pwsh\s*$') {
   throw 'portable.env.example must default SHELL=pwsh'
+}
+if ($PortableEnvExampleText -notmatch '(?m)^# Parent DSH_SHELL=pwsh\|bash overrides this file') {
+  throw 'portable.env.example must document the parent DSH_SHELL override'
 }
 foreach ($needle in @('(?m)^# PROXY=', '(?m)^# ALL_PROXY=', '(?m)^# NPM_REGISTRY=', '(?m)^# NPM_AUTH_TOKEN=', '(?m)^# NODE_EXTRA_CA_CERTS=')) {
   if ($PortableEnvExampleText -notmatch $needle) {
@@ -138,6 +155,7 @@ function Assert-NoProfileDrift([hashtable]$Before, [hashtable]$After) {
 }
 
 $Before = Get-ProfileSnapshot
+Remove-Item Env:DSH_SHELL -ErrorAction SilentlyContinue
 
 # --- version ---
 Write-Host '==> dsh --version'
@@ -213,6 +231,38 @@ if ($DumpText -notmatch 'DSH_SHELL') {
   throw 'dsh web --dump-config must include the portable shell overlay'
 }
 
+foreach ($probe in @(
+  @{ Label = '--profile web --dump-config'; Args = '--profile web --dump-config'; Overlay = $true },
+  @{ Label = '--profile headless --dump-config'; Args = '--profile headless --dump-config'; Overlay = $true },
+  @{ Label = 'web --dump-default-config'; Args = 'web --dump-default-config'; Overlay = $false },
+  @{ Label = '--profile web --dump-default-config'; Args = '--profile web --dump-default-config'; Overlay = $false }
+)) {
+  Write-Host "==> dsh $($probe.Label)"
+  $ProbeOut = & cmd /d /c "`"$DshCmd`" $($probe.Args) 2>&1"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host ($ProbeOut | Out-String)
+    throw "dsh $($probe.Label) failed with exit code $LASTEXITCODE"
+  }
+  $HasOverlay = ($ProbeOut | Out-String) -match 'DSH_SHELL'
+  if ($HasOverlay -ne $probe.Overlay) {
+    throw "dsh $($probe.Label) overlay=$HasOverlay, expected $($probe.Overlay)"
+  }
+}
+
+Write-Host '==> dsh plugin --profile web --version'
+$PluginVer = & cmd /d /c "`"$DshCmd`" plugin --profile web --version"
+if ($LASTEXITCODE -ne 0) { throw "dsh plugin --profile web --version failed with exit code $LASTEXITCODE" }
+$PnpmPattern = '(?m)^' + [regex]::Escape($PnpmVer) + '\s*$'
+if (($PluginVer | Out-String) -notmatch $PnpmPattern) {
+  throw "dsh plugin reported '$($PluginVer | Out-String)', expected pnpm $PnpmVer"
+}
+
+function Get-LauncherShell {
+  $ShellOut = & cmd /d /c "`"$DshCmd`" plugin --profile web exec node -p process.env.DSH_SHELL"
+  if ($LASTEXITCODE -ne 0) { throw "launcher shell probe failed with exit code $LASTEXITCODE" }
+  return @($ShellOut | ForEach-Object { ("$_").Trim() } | Where-Object { $_ -in @('pwsh', 'bash') })[-1]
+}
+
 $PortableEnv = Join-Path $StageDir 'data\portable.env'
 $PortableEnvBackup = $null
 if (Test-Path -LiteralPath $PortableEnv) {
@@ -220,6 +270,17 @@ if (Test-Path -LiteralPath $PortableEnv) {
 }
 try {
   Set-Content -Path $PortableEnv -Value "SHELL=bash`r`n" -Encoding ascii
+
+  $env:DSH_SHELL = 'pwsh'
+  Write-Host '==> parent DSH_SHELL overrides portable.env SHELL'
+  $ParentShell = Get-LauncherShell
+  if ($ParentShell -ne 'pwsh') { throw "parent DSH_SHELL resolved to '$ParentShell', expected 'pwsh'" }
+  Remove-Item Env:DSH_SHELL -ErrorAction SilentlyContinue
+
+  Write-Host '==> portable.env SHELL applies without parent override'
+  $FileShell = Get-LauncherShell
+  if ($FileShell -ne 'bash') { throw "portable.env SHELL resolved to '$FileShell', expected 'bash'" }
+
   Write-Host '==> dsh web --dump-config (SHELL=bash)'
   $DumpBash = & cmd /c "`"$DshCmd`" web --dump-config 2>&1"
   if ($LASTEXITCODE -ne 0) {
@@ -270,6 +331,7 @@ try {
     throw "dsh web --dump-config with HTTP_PROXY=127.0.0.1:9 failed with exit code $LASTEXITCODE"
   }
 } finally {
+  Remove-Item Env:DSH_SHELL -ErrorAction SilentlyContinue
   if ($null -ne $PortableEnvBackup) {
     Set-Content -Path $PortableEnv -Value $PortableEnvBackup -Encoding ascii -NoNewline
   } elseif (Test-Path -LiteralPath $PortableEnv) {
@@ -288,7 +350,7 @@ foreach ($f in @($WebOut, $WebErr)) { if (Test-Path $f) { Remove-Item -Force $f 
 # Invoke through cmd.exe so we exercise the real launcher, but capture stdio via
 # Start-Process redirects (cmd '>' redirection is unreliable under Start-Process).
 $WebProc = Start-Process -FilePath 'cmd.exe' `
-  -ArgumentList @('/c', "`"$DshCmd`" web --no-open --port $WebPort") `
+  -ArgumentList @('/c', "`"$DshCmd`" web --host 127.0.0.1 --port $WebPort --no-open --trusted-host localhost --trusted-host example.test") `
   -WorkingDirectory (Join-Path $StageDir 'data\workspace') `
   -RedirectStandardOutput $WebOut `
   -RedirectStandardError $WebErr `
@@ -341,9 +403,11 @@ try {
   if (-not $WebProc.HasExited) {
     Stop-Process -Id $WebProc.Id -Force -ErrorAction SilentlyContinue
   }
-  Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like "*$StageDir*" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  $StageNodes = @(Get-Process node -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $NodeExe })
+  $StageNodes | Stop-Process -Force -ErrorAction SilentlyContinue
+  $StageNodes | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+  $WebProc.WaitForExit(10000) | Out-Null
 }
 
 # --- profile created under data\ ---

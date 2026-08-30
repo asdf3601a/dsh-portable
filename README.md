@@ -34,7 +34,7 @@ Persistent state stays inside the folder under `data\`:
 
 **Nothing is written to `%USERPROFILE%\.dsh`.** Copy the whole folder to move your environment.
 
-Edit `data\portable.env` (`KEY=value`, no spaces around `=`), then restart `start.cmd` / `dsh.cmd`. A parent process environment variable already set wins over this file.
+Edit `data\portable.env` (`KEY=value`, no spaces around `=`), then restart `start.cmd` / `dsh.cmd`. Standard parent environment variables still win; for the shell, set parent `DSH_SHELL=pwsh|bash` to override this file.
 
 ### Shell
 
@@ -43,6 +43,8 @@ The agent shell defaults to **pwsh** (upstream Windows behavior). To use bundled
 ```
 SHELL=bash
 ```
+
+For a one-session parent override instead, set `DSH_SHELL=bash` before launching.
 
 Bundled `git.exe` stays first on PATH in both modes. Git identity is stored in `data\dsh-home\gitconfig`, not `%USERPROFILE%\.gitconfig`. SSH still uses your existing `%USERPROFILE%\.ssh` keys unless you set `HOME` yourself. Git Credential Manager uses the Windows Credential Manager.
 

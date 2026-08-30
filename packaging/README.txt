@@ -32,7 +32,8 @@ Copy the whole folder to another PC / USB drive to take your environment with yo
 Prefer NTFS for USB drives that store API keys.
 
 Edit data\portable.env (KEY=value, no spaces around '='), then restart start.cmd.
-A variable already set in the parent console wins over this file.
+Standard parent variables win; use DSH_SHELL=pwsh or DSH_SHELL=bash to
+override the shell from the parent console.
 
 Git and shell
 -------------
@@ -42,6 +43,8 @@ not used unless you remove the bundled copy.
 The agent shell defaults to pwsh. To use Git Bash instead, set:
 
   SHELL=bash
+
+For a one-session parent override, set DSH_SHELL=bash before launching.
 
 Git config is data\dsh-home\gitconfig. SSH keys still come from
 %USERPROFILE%\.ssh unless you set HOME yourself.

@@ -91,36 +91,33 @@ function Install-GitPayload {
   Write-Host '    SHA256 OK'
 
   # Current PortableGit SFX ignores -InstallPath/-o and always unpacks a
-  # PortableGit folder into the working directory (and runs post-install).
+  # PortableGit folder beside the SFX (and runs post-install).
   $Extracted = Join-Path $WorkDir 'PortableGit'
   if (Test-Path -LiteralPath $Extracted) { Remove-Item -Recurse -Force $Extracted }
   if (Test-Path -LiteralPath $DestDir) { Remove-Item -Recurse -Force $DestDir }
-  # The SFX process can return before unpack finishes; wait for git.exe.
-  Invoke-Native -FilePath $Sfx -ArgumentList @('-y', '-gm2') -WorkingDirectory $WorkDir
+
+  # Start-Process -Wait includes descendants, including the SFX post-install.
+  $Process = Start-Process -FilePath $Sfx -ArgumentList @('-y', '-gm2') `
+    -WorkingDirectory $WorkDir -WindowStyle Hidden -Wait -PassThru
+  if ($Process.ExitCode -ne 0) {
+    throw "$Sfx exited with code $($Process.ExitCode)"
+  }
+
   $GitExe = Join-Path $Extracted 'cmd\git.exe'
   $BashExe = Join-Path $Extracted 'usr\bin\bash.exe'
-  $deadline = (Get-Date).AddMinutes(5)
-  $gitSeenAt = $null
-  while ((Get-Date) -lt $deadline) {
-    if ((Test-Path -LiteralPath $GitExe) -and (Test-Path -LiteralPath $BashExe)) {
-      if ($null -eq $gitSeenAt) { $gitSeenAt = Get-Date }
-      $postGone = -not (Test-Path -LiteralPath (Join-Path $Extracted 'post-install.bat'))
-      $waited = ((Get-Date) - $gitSeenAt).TotalSeconds -ge 8
-      if ($postGone -or $waited) { break }
-    }
-    Start-Sleep -Seconds 1
-  }
-  if (-not (Test-Path -LiteralPath $GitExe)) {
-    throw "PortableGit SFX did not create $GitExe"
-  }
-  New-Item -ItemType Directory -Force -Path (Split-Path $DestDir) | Out-Null
-  Move-Item -LiteralPath $Extracted -Destination $DestDir
-
-  $Post = Join-Path $DestDir 'post-install.bat'
+  $Post = Join-Path $Extracted 'post-install.bat'
   if (Test-Path -LiteralPath $Post) {
     Write-Host '    running post-install.bat'
-    Invoke-Native -FilePath $Post -WorkingDirectory $DestDir
+    Invoke-Native -FilePath $Post -WorkingDirectory $Extracted
   }
+  if (-not (Test-Path -LiteralPath $GitExe) -or -not (Test-Path -LiteralPath $BashExe)) {
+    Write-Host "    extract listing of $Extracted :"
+    Get-ChildItem -LiteralPath $Extracted -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "      $($_.Name)" }
+    throw "PortableGit extract incomplete (need cmd\git.exe and usr\bin\bash.exe) under $Extracted"
+  }
+
+  New-Item -ItemType Directory -Force -Path (Split-Path $DestDir) | Out-Null
+  Move-Item -LiteralPath $Extracted -Destination $DestDir
   $GitExe = Join-Path $DestDir 'cmd\git.exe'
   $BashExe = Join-Path $DestDir 'usr\bin\bash.exe'
   if (-not (Test-Path -LiteralPath $GitExe) -or -not (Test-Path -LiteralPath $BashExe)) {
@@ -151,7 +148,7 @@ function Publish-PortablePreset([string]$AppDir, [string]$DestDir) {
   $utf8 = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($composition, $text, $utf8)
 
-  $meta = "name: Portable`r`ndescription: Standard coding agent. Shell follows data\portable.env (SHELL=pwsh or SHELL=bash).`r`norder: 1`r`n"
+  $meta = "name: Portable`r`ndescription: Standard coding agent. Shell follows DSH_SHELL or data\portable.env.`r`norder: 1`r`n"
   [System.IO.File]::WriteAllText((Join-Path $DestDir 'preset.yml'), $meta, $utf8)
 }
 
@@ -409,6 +406,8 @@ $PortableRuntime = Join-Path $Stage 'runtime\portable'
 New-Item -ItemType Directory -Force -Path $PortableRuntime | Out-Null
 Copy-Item (Join-Path $Root 'packaging\runtime-portable\shell.cordis.yml') `
   (Join-Path $PortableRuntime 'shell.cordis.yml') -Force
+Copy-Item (Join-Path $Root 'packaging\runtime-portable\argv.cjs') `
+  (Join-Path $PortableRuntime 'argv.cjs') -Force
 Publish-PortablePreset -AppDir $AppDir -DestDir (Join-Path $PortableRuntime 'presets\portable')
 
 foreach ($rel in @(
