@@ -16,6 +16,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $Root = Split-Path -Parent $PSScriptRoot
 
@@ -28,23 +29,86 @@ function Test-NpmDsh([string]$Version) {
   }
 }
 
-function Invoke-Native([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory = '') {
+function ConvertTo-NativeArgumentLine([string[]]$ArgumentList) {
+  if (-not $ArgumentList) { return '' }
+  $parts = foreach ($raw in $ArgumentList) {
+    $s = [string]$raw
+    if ($s.Length -eq 0) {
+      '""'
+    } elseif ($s -notmatch '[ \t"]') {
+      $s
+    } else {
+      '"' + ($s -replace '\\', '\\' -replace '"', '\"') + '"'
+    }
+  }
+  return [string]::Join(' ', @($parts))
+}
+
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [string[]]$ArgumentList = @(),
+    [string]$WorkingDirectory = '',
+    [switch]$Quiet
+  )
   Write-Host "    > $FilePath $($ArgumentList -join ' ')"
-  if ($WorkingDirectory) {
-    Push-Location -LiteralPath $WorkingDirectory
-    try {
+  if (-not $Quiet) {
+    if ($WorkingDirectory) {
+      Push-Location -LiteralPath $WorkingDirectory
+      try {
+        & $FilePath @ArgumentList
+        $code = $LASTEXITCODE
+      } finally {
+        Pop-Location
+      }
+    } else {
       & $FilePath @ArgumentList
       $code = $LASTEXITCODE
-    } finally {
-      Pop-Location
     }
-  } else {
-    & $FilePath @ArgumentList
-    $code = $LASTEXITCODE
+    if ($null -eq $code) { $code = 0 }
+    if ($code -ne 0) {
+      throw "$FilePath exited with code $code"
+    }
+    return
   }
-  if ($null -eq $code) { $code = 0 }
-  if ($code -ne 0) {
-    throw "$FilePath exited with code $code"
+
+  $stdoutFile = [System.IO.Path]::GetTempFileName()
+  $stderrFile = [System.IO.Path]::GetTempFileName()
+  try {
+    $argLine = ConvertTo-NativeArgumentLine $ArgumentList
+    $ext = [System.IO.Path]::GetExtension($FilePath)
+    $start = @{
+      Wait              = $true
+      PassThru          = $true
+      NoNewWindow       = $true
+      RedirectStandardOutput = $stdoutFile
+      RedirectStandardError  = $stderrFile
+    }
+    if ($WorkingDirectory) { $start['WorkingDirectory'] = $WorkingDirectory }
+    if ($ext -match '^\.(bat|cmd)$') {
+      $bat = $FilePath
+      if ($bat -match '[ \t"]') { $bat = '"' + ($bat -replace '"', '\"') + '"' }
+      $start['FilePath'] = $env:ComSpec
+      $inner = $bat
+      if ($argLine) { $inner = "$bat $argLine" }
+      $start['ArgumentList'] = "/d /c $inner"
+    } else {
+      $start['FilePath'] = $FilePath
+      if ($argLine) { $start['ArgumentList'] = $argLine }
+    }
+    $proc = Start-Process @start
+    $code = $proc.ExitCode
+    if ($null -eq $code) { $code = 0 }
+    if ($code -ne 0) {
+      foreach ($log in @($stdoutFile, $stderrFile)) {
+        if ((Get-Item -LiteralPath $log).Length -gt 0) {
+          Write-Host ([System.IO.File]::ReadAllText($log))
+        }
+      }
+      throw "$FilePath exited with code $code"
+    }
+  } finally {
+    Remove-Item -LiteralPath $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -108,7 +172,7 @@ function Install-GitPayload {
   $Post = Join-Path $Extracted 'post-install.bat'
   if (Test-Path -LiteralPath $Post) {
     Write-Host '    running post-install.bat'
-    Invoke-Native -FilePath $Post -WorkingDirectory $Extracted
+    Invoke-Native -FilePath $Post -WorkingDirectory $Extracted -Quiet
   }
   if (-not (Test-Path -LiteralPath $GitExe) -or -not (Test-Path -LiteralPath $BashExe)) {
     Write-Host "    extract listing of $Extracted :"
@@ -155,7 +219,7 @@ function Publish-PortablePreset([string]$AppDir, [string]$DestDir) {
 function Install-DshFromNpm([string]$Version, [string]$NpmCmd, [string]$AppDir) {
   Write-Host "==> npm install @deepseek-ai/dsh@$Version (registry)"
   New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-  & $NpmCmd install --prefix $AppDir --no-fund --no-audit --loglevel=error --foreground-scripts "@deepseek-ai/dsh@$Version"
+  & $NpmCmd install --prefix $AppDir --no-fund --no-audit --loglevel=error "@deepseek-ai/dsh@$Version"
   if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
 }
 
@@ -200,7 +264,7 @@ function Install-DshFromGitTag {
     try { & git config --system core.longpaths true 2>$null } catch { }
 
     Invoke-Native -FilePath 'git' -ArgumentList @(
-      'clone', '--depth', '1', '--branch', $Tag,
+      'clone', '--quiet', '--depth', '1', '--branch', $Tag,
       'https://github.com/deepseek-ai/deepseek-harness.git',
       $UpstreamDir
     )
@@ -209,7 +273,9 @@ function Install-DshFromGitTag {
     if (-not $env:NODE_OPTIONS) { $env:NODE_OPTIONS = '--max-old-space-size=8192' }
 
     Write-Host '==> pnpm install (upstream monorepo)'
-    Invoke-Native -FilePath $PnpmExe -ArgumentList @('install', '--frozen-lockfile') -WorkingDirectory $UpstreamDir
+    Invoke-Native -FilePath $PnpmExe -ArgumentList @(
+      'install', '--frozen-lockfile', '--reporter=silent'
+    ) -WorkingDirectory $UpstreamDir -Quiet
 
     Write-Host '==> pnpm run build:official'
     Invoke-Native -FilePath $PnpmExe -ArgumentList @('run', 'build:official') -WorkingDirectory $UpstreamDir
@@ -217,12 +283,12 @@ function Install-DshFromGitTag {
     Write-Host '==> release:pack family dsh'
     Invoke-Native -FilePath $PnpmExe -ArgumentList @(
       'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'dsh', '--out', 'dist/npm-dsh'
-    ) -WorkingDirectory $UpstreamDir
+    ) -WorkingDirectory $UpstreamDir -Quiet
 
     Write-Host '==> release:pack family vendor'
     Invoke-Native -FilePath $PnpmExe -ArgumentList @(
       'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'vendor', '--out', 'dist/npm-vendor'
-    ) -WorkingDirectory $UpstreamDir
+    ) -WorkingDirectory $UpstreamDir -Quiet
   } else {
     Write-Host "==> reusing existing release:pack output under $UpstreamDir"
   }

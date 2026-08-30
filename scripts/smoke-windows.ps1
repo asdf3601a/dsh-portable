@@ -12,6 +12,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $StageDir = (Resolve-Path -LiteralPath $StageDir).Path
 $DshCmd = Join-Path $StageDir 'dsh.cmd'
