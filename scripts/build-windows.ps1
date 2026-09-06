@@ -191,29 +191,40 @@ function Install-GitPayload {
   }
 }
 
-function Publish-PortablePreset([string]$AppDir, [string]$DestDir) {
-  $src = Join-Path $AppDir 'node_modules\@deepseek-ai\dsh-agent-presets\presets\standard'
-  if (-not (Test-Path -LiteralPath (Join-Path $src 'agent.cordis.yml'))) {
-    throw "shipped standard preset missing: $src"
-  }
-  if (Test-Path -LiteralPath $DestDir) { Remove-Item -Recurse -Force $DestDir }
-  New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
-  Copy-Item -Path (Join-Path $src '*') -Destination $DestDir -Recurse -Force
-
-  $composition = Join-Path $DestDir 'agent.cordis.yml'
-  $text = [System.IO.File]::ReadAllText($composition)
-  $bashNeedle = "disabled: !!js process.platform === 'win32'"
-  $pwshNeedle = "disabled: !!js process.platform !== 'win32'"
-  if (-not $text.Contains($bashNeedle) -or -not $text.Contains($pwshNeedle)) {
-    throw 'standard preset shell gates changed; update Publish-PortablePreset'
-  }
-  $text = $text.Replace($bashNeedle, "disabled: !!js process.env.DSH_SHELL !== 'bash'")
-  $text = $text.Replace($pwshNeedle, "disabled: !!js process.env.DSH_SHELL === 'bash'")
+function Set-BundledPresetShells([string]$AppDir) {
+  $presets = Join-Path $AppDir 'node_modules\@deepseek-ai\dsh-agent-presets\presets'
   $utf8 = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($composition, $text, $utf8)
-
-  $meta = "name: Portable`r`ndescription: Standard coding agent. Shell follows DSH_SHELL or data\portable.env.`r`norder: 1`r`n"
-  [System.IO.File]::WriteAllText((Join-Path $DestDir 'preset.yml'), $meta, $utf8)
+  foreach ($preset in @('standard', 'cordis', 'ptc', 'minimal')) {
+    $composition = Join-Path $presets "$preset\agent.cordis.yml"
+    $text = [System.IO.File]::ReadAllText($composition)
+    foreach ($shell in @('bash', 'pwsh')) {
+      $platformTest = if ($shell -eq 'bash') { "=== 'win32'" } else { "!== 'win32'" }
+      $shellTest = if ($shell -eq 'bash') { "!== 'bash'" } else { "=== 'bash'" }
+      $rows = if ($preset -eq 'minimal') {
+        @{ "terminal-$shell" = 'terminal-bash'; "persistent-$shell" = "tool-$shell-persistent" }
+      } else {
+        @{ "tool-$shell" = "tool-$shell" }
+      }
+      foreach ($id in $rows.Keys) {
+        $pattern = '(?m)(^\s*- id: ' + [regex]::Escape($id) + '\r?\n\s+name: ''@deepseek-ai/dsh-' +
+          [regex]::Escape($rows[$id]) + '''\r?\n\s+disabled: !!js )' +
+          [regex]::Escape("process.platform $platformTest") + '(?=\r?$)'
+        if ([regex]::Matches($text, $pattern).Count -ne 1) {
+          throw "$preset/$id shell gate changed; update Set-BundledPresetShells"
+        }
+        $text = [regex]::Replace($text, $pattern, ('${1}process.env.DSH_SHELL ' + $shellTest))
+      }
+    }
+    if ($preset -eq 'minimal') {
+      $pattern = '(?m)(^    - id: terminal-bash\r?\n[^\r\n]*\r?\n[^\r\n]*\r?\n      config:)(\r?\n)(        timeoutMs:)'
+      if ([regex]::Matches($text, $pattern).Count -ne 1) {
+        throw 'minimal/terminal-bash config changed; update Set-BundledPresetShells'
+      }
+      $text = [regex]::Replace($text, $pattern,
+        '${1}${2}        shellPath: !!js process.env.DSH_PORTABLE_ROOT + ''/runtime/git/usr/bin/bash.exe''${2}${3}')
+    }
+    [System.IO.File]::WriteAllText($composition, $text, $utf8)
+  }
 }
 
 function Install-DshFromNpm([string]$Version, [string]$NpmCmd, [string]$AppDir) {
@@ -474,7 +485,7 @@ Copy-Item (Join-Path $Root 'packaging\runtime-portable\shell.cordis.yml') `
   (Join-Path $PortableRuntime 'shell.cordis.yml') -Force
 Copy-Item (Join-Path $Root 'packaging\runtime-portable\argv.cjs') `
   (Join-Path $PortableRuntime 'argv.cjs') -Force
-Publish-PortablePreset -AppDir $AppDir -DestDir (Join-Path $PortableRuntime 'presets\portable')
+Set-BundledPresetShells -AppDir $AppDir
 
 foreach ($rel in @(
   'data\dsh-home',

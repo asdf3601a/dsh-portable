@@ -53,11 +53,9 @@ function Test-PortableAssetPublished([string]$Repo, [string]$Version) {
     Write-Warning "could not look up $Repo release $tag : $_"
     return $false
   }
-  $want = "dsh-portable-$Version-win-x64.zip"
-  foreach ($asset in @($rel.assets)) {
-    if ([string]$asset.name -eq $want) { return $true }
-  }
-  return $false
+  $requiredAssets = @("dsh-portable-$Version-win-x64.zip", 'SHA256SUMS.txt')
+  $assetNames = @($rel.assets | ForEach-Object { $_.name })
+  return @($requiredAssets | Where-Object { $_ -notin $assetNames }).Count -eq 0
 }
 
 function Write-ResolverResult([bool]$HasPending, [string]$Version, $PendingObj) {

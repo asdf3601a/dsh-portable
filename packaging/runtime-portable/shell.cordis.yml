@@ -1,5 +1,5 @@
 # Portable overlay: switch the host shell executor with DSH_SHELL resolved by dsh.cmd.
-# The argv preload passes this file as `--patch`; it is not a profile user patch.
+# The argv preload passes this file as `--patch`; built-in preset tools use the same switch.
 
 - id: bash-sandbox
   name: '@deepseek-ai/dsh-bash-sandbox'
@@ -10,11 +10,3 @@
 - id: pwsh-sandbox
   name: '@deepseek-ai/dsh-pwsh-sandbox'
   disabled: !!js process.env.DSH_SHELL === 'bash'
-
-- id: agent-presets
-  name: '@deepseek-ai/dsh-agent-presets'
-  config:
-    default: portable
-    roots:
-      - path: !!js process.env.DSH_PORTABLE_ROOT + '/runtime/portable/presets'
-        trust: system

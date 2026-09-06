@@ -15,6 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Test release detection
+        shell: pwsh
+        run: ./scripts/test-resolve-upstream.ps1
+
       - name: Resolve dsh version (latest upstream dsh-v* / fallback)
         id: ver
         shell: pwsh

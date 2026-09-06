@@ -46,6 +46,15 @@ SHELL=bash
 
 For a one-session parent override instead, set `DSH_SHELL=bash` before launching.
 
+All built-in agent presets follow this switch, including the persistent shell in `minimal`.
+Packaging adjusts their shell plugin settings in place, preserving the upstream names, IDs,
+order, and default (`standard`); it does not add a Portable profile or edit custom presets.
+
+Git Bash can fail to start inside dsh's Windows restricted-token sandbox with
+`couldn't create signal pipe, Win32 error 5`. Use PowerShell for sandboxed sessions.
+The shell switch does not change permission settings. See the
+[upstream report](https://github.com/deepseek-ai/deepseek-harness/discussions/2990).
+
 Bundled `git.exe` stays first on PATH in both modes. Git identity is stored in `data\dsh-home\gitconfig`, not `%USERPROFILE%\.gitconfig`. SSH still uses your existing `%USERPROFILE%\.ssh` keys unless you set `HOME` yourself. Git Credential Manager uses the Windows Credential Manager.
 
 A Git Bash window is `runtime\git\git-bash.exe`.
@@ -127,6 +136,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-windows.ps1 `
 ```
 
 Artifacts land in `dist\`. The git-pack path requires **git** on PATH.
+
+The smoke test executes fixed shell commands without an LLM. Its temporary test
+sessions use `danger-full-access` to check shell selection independently of the
+Windows sandbox limitation above; application defaults are unchanged. Pass
+`-ShellPermissionMode workspace-write` to test the sandboxed execution path too.
 
 ## License
 

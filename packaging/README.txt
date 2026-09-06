@@ -46,6 +46,15 @@ The agent shell defaults to pwsh. To use Git Bash instead, set:
 
 For a one-session parent override, set DSH_SHELL=bash before launching.
 
+All built-in agent presets follow this switch, including minimal's persistent
+shell. Packaging adjusts shell plugin settings in place and keeps the original
+names, IDs, order, and standard default. No Portable profile is added, and
+custom presets are not edited.
+
+Git Bash can fail inside dsh's Windows restricted-token sandbox with
+"couldn't create signal pipe, Win32 error 5". Use PowerShell for sandboxed
+sessions. The shell switch does not change permission settings.
+
 Git config is data\dsh-home\gitconfig. SSH keys still come from
 %USERPROFILE%\.ssh unless you set HOME yourself.
 

@@ -33,7 +33,7 @@ if exist "%ROOT%\data\portable.env" (
   )
 )
 if not defined DSH_SHELL if defined _P_SHELL set "DSH_SHELL=%_P_SHELL%"
-if /I not "%DSH_SHELL%"=="bash" set "DSH_SHELL=pwsh"
+if /I "%DSH_SHELL%"=="bash" (set "DSH_SHELL=bash") else (set "DSH_SHELL=pwsh")
 
 if not defined _P_PROXY goto :proxy_scheme_done
 if /I "%_P_PROXY:~0,7%"=="http://" set "_P_PROXY_OK=1"

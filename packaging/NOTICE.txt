@@ -3,7 +3,7 @@ dsh-portable — unofficial community packager
 
 This project is NOT affiliated with, endorsed by, or sponsored by DeepSeek.
 
-It redistributes, without modification:
+It redistributes:
 
   • DeepSeek Harness (dsh)    MIT License — from upstream Git tag dsh-v* / npm
                               https://github.com/deepseek-ai/deepseek-harness
@@ -11,6 +11,10 @@ It redistributes, without modification:
   • pnpm                      MIT License — https://github.com/pnpm/pnpm
   • Git for Windows           GPL-2.0 — https://github.com/git-for-windows/git
                               (PortableGit; licenses also under runtime\git\)
+
+Packaging adjusts the bundled dsh agent presets' shell plugin settings to follow
+DSH_SHELL and points minimal's Bash terminal at bundled Git Bash. Their original
+names, IDs, order, and metadata are preserved; no additional preset is shipped.
 
 DeepSeek, DeepSeek Harness, and related marks belong to their respective owners.
 

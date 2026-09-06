@@ -6,6 +6,10 @@ param(
 
   [string]$ExpectedDshVersion = '',
 
+  # These keyless probes execute only fixed diagnostic commands in test sessions.
+  [ValidateSet('workspace-write', 'danger-full-access')]
+  [string]$ShellPermissionMode = 'danger-full-access',
+
   [int]$WebTimeoutSec = 90,
 
   [int]$WebPort = 3080
@@ -23,7 +27,7 @@ $GitExe = Join-Path $StageDir 'runtime\git\cmd\git.exe'
 $BashExe = Join-Path $StageDir 'runtime\git\usr\bin\bash.exe'
 $ShellOverlay = Join-Path $StageDir 'runtime\portable\shell.cordis.yml'
 $ArgvPreload = Join-Path $StageDir 'runtime\portable\argv.cjs'
-$PortablePreset = Join-Path $StageDir 'runtime\portable\presets\portable\agent.cordis.yml'
+$BundledPresets = Join-Path $StageDir 'app\node_modules\@deepseek-ai\dsh-agent-presets\presets'
 
 Write-Host "==> smoke: $StageDir"
 
@@ -35,7 +39,10 @@ if (-not (Test-Path $GitExe)) { throw "missing bundled git.exe" }
 if (-not (Test-Path $BashExe)) { throw "missing bundled Git Bash (usr\bin\bash.exe)" }
 if (-not (Test-Path $ShellOverlay)) { throw "missing shell overlay: $ShellOverlay" }
 if (-not (Test-Path $ArgvPreload)) { throw "missing argument preload: $ArgvPreload" }
-if (-not (Test-Path $PortablePreset)) { throw "missing portable preset: $PortablePreset" }
+if (Test-Path (Join-Path $StageDir 'runtime\portable\presets')) { throw 'portable must not ship additional presets' }
+if ((Get-Content -LiteralPath $ShellOverlay -Raw) -match 'agent-presets') {
+  throw 'shell overlay must not replace the upstream preset roster or default'
+}
 
 # TMP/TEMP redirection must remain commented out by default.
 $Launcher = Get-Content -LiteralPath $DshCmd -Raw
@@ -203,12 +210,13 @@ $BashOut = ("$BashOut").Trim()
 if ($BashOut -ne 'DSH_OK') { throw "bundled bash -c returned '$BashOut'" }
 Write-Host '    DSH_OK'
 
-$PresetText = Get-Content -LiteralPath $PortablePreset -Raw
-if ($PresetText -notmatch "process\.env\.DSH_SHELL !== 'bash'") {
-  throw 'portable preset must gate tool-bash on DSH_SHELL'
-}
-if ($PresetText -notmatch "process\.env\.DSH_SHELL === 'bash'") {
-  throw 'portable preset must gate tool-pwsh on DSH_SHELL'
+foreach ($preset in @('standard', 'cordis', 'ptc', 'minimal')) {
+  $PresetText = Get-Content -LiteralPath (Join-Path $BundledPresets "$preset\agent.cordis.yml") -Raw
+  if ($PresetText -notmatch "process\.env\.DSH_SHELL !== 'bash'" -or
+      $PresetText -notmatch "process\.env\.DSH_SHELL === 'bash'" -or
+      $PresetText -match 'disabled: !!js process\.platform') {
+    throw "$preset must gate its shell plugins on DSH_SHELL"
+  }
 }
 
 # --- dump-config ---
@@ -264,23 +272,63 @@ function Get-LauncherShell {
   return @($ShellOut | ForEach-Object { ("$_").Trim() } | Where-Object { $_ -in @('pwsh', 'bash') })[-1]
 }
 
+function Test-PresetShell([string]$ExpectedShell) {
+  Write-Host "==> built-in presets execute $ExpectedShell through dsh web (test sessions: $ShellPermissionMode)"
+  $ProbeDir = Join-Path $StageDir ('data\cache\preset-smoke-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $ProbeDir | Out-Null
+  $ProbeModule = Join-Path $ProbeDir 'smoke-presets.mjs'
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'smoke-presets.mjs') -Destination $ProbeModule
+  $ProbePatch = Join-Path $ProbeDir 'probe.yml'
+  @(
+    @{ id = 'settings'; config = @{ path = (Join-Path $ProbeDir 'settings.yaml'); watch = $false } },
+    @{ insert = @(@{
+      id = 'portable-preset-smoke'; name = ([uri]$ProbeModule).AbsoluteUri
+      config = @{ permissionMode = $ShellPermissionMode }
+    }) }
+  ) | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ProbePatch -Encoding utf8
+  $Output = & cmd /d /c "`"$DshCmd`" web --patch `"$ProbePatch`" --host 127.0.0.1 --port $WebPort --no-open 2>&1" |
+    ForEach-Object { Write-Host $_; $_ }
+  $Code = $LASTEXITCODE
+  if ($Code -ne 0 -or ($Output | Out-String) -notmatch "(?m)^DSH_PRESET_SMOKE_OK $ExpectedShell\s*$") {
+    throw "preset smoke for $ExpectedShell failed (exit $Code); probe: $ProbeDir"
+  }
+  # Probe files live only in this test's unique directory inside the unpacked package.
+  $ResolvedProbe = (Resolve-Path -LiteralPath $ProbeDir).Path
+  if (-not $ResolvedProbe.StartsWith($StageDir + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "probe cleanup escaped StageDir: $ResolvedProbe"
+  }
+  Remove-Item -LiteralPath $ResolvedProbe -Recurse -Force
+}
+
 $PortableEnv = Join-Path $StageDir 'data\portable.env'
 $PortableEnvBackup = $null
 if (Test-Path -LiteralPath $PortableEnv) {
   $PortableEnvBackup = Get-Content -LiteralPath $PortableEnv -Raw
 }
 try {
-  Set-Content -Path $PortableEnv -Value "SHELL=bash`r`n" -Encoding ascii
+  Set-Content -Path $PortableEnv -Value "SHELL=pwsh`r`n" -Encoding ascii
+  Write-Host '==> parent DSH_SHELL normalizes Bash casing and overrides portable.env'
+  foreach ($ShellCase in @('bash', 'BASH', 'BaSh')) {
+    $env:DSH_SHELL = $ShellCase
+    $ParentShell = Get-LauncherShell
+    if ($ParentShell -cne 'bash') {
+      throw "parent DSH_SHELL=$ShellCase resolved to '$ParentShell', expected lowercase bash"
+    }
+  }
+
+  Set-Content -Path $PortableEnv -Value "SHELL=BASH`r`n" -Encoding ascii
 
   $env:DSH_SHELL = 'pwsh'
   Write-Host '==> parent DSH_SHELL overrides portable.env SHELL'
   $ParentShell = Get-LauncherShell
-  if ($ParentShell -ne 'pwsh') { throw "parent DSH_SHELL resolved to '$ParentShell', expected 'pwsh'" }
+  if ($ParentShell -cne 'pwsh') { throw "parent DSH_SHELL resolved to '$ParentShell', expected 'pwsh'" }
+  Test-PresetShell -ExpectedShell 'pwsh'
   Remove-Item Env:DSH_SHELL -ErrorAction SilentlyContinue
 
-  Write-Host '==> portable.env SHELL applies without parent override'
+  Write-Host '==> portable.env SHELL=BASH normalizes without parent override'
   $FileShell = Get-LauncherShell
-  if ($FileShell -ne 'bash') { throw "portable.env SHELL resolved to '$FileShell', expected 'bash'" }
+  if ($FileShell -cne 'bash') { throw "portable.env SHELL resolved to '$FileShell', expected lowercase bash" }
+  Test-PresetShell -ExpectedShell 'bash'
 
   Write-Host '==> dsh web --dump-config (SHELL=bash)'
   $DumpBash = & cmd /c "`"$DshCmd`" web --dump-config 2>&1"
