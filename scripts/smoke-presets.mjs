@@ -80,7 +80,9 @@ async function run(ctx, permissionMode) {
         const retained = await execute(shell === 'bash'
           ? 'echo "$DSH_PORTABLE_SMOKE_STATE"'
           : 'Write-Output $env:DSH_PORTABLE_SMOKE_STATE');
-        assert.equal(retained.trim(), 'retained');
+        assert.match(retained.trim(), shell === 'bash'
+          ? /^retained(?:\r?\n\[Command finished with exit code 0\])?$/
+          : /^retained$/);
       }
       console.log(`    ${id}: ${shell} tool executed${id === 'minimal' ? ', state retained' : ''}`);
     } finally {
