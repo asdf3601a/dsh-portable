@@ -1,7 +1,6 @@
 // Loaded only by smoke-windows.ps1 through the packaged dsh launcher.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
 
 export const name = 'portable-preset-smoke';
 export const inject = ['appReady', 'appExit', 'agentPresets', 'agents', 'tools', 'shell', 'loader', 'permissionPresets'];
@@ -25,8 +24,10 @@ export function apply(ctx, config) {
 async function run(ctx, permissionMode) {
   const shell = process.env.DSH_SHELL;
   assert.ok(shell === 'bash' || shell === 'pwsh');
-  const ids = ['cordis', 'minimal', 'ptc', 'standard'];
-  assert.deepEqual((await ctx.agentPresets.list()).map(preset => preset.id).sort(), ids);
+  const ids = ['standard', 'ptc', 'minimal', 'cordis'];
+  const presets = await ctx.agentPresets.list();
+  assert.deepEqual(presets.map(preset => preset.id), ids);
+  for (const preset of presets) assert.equal(preset.broken, undefined, JSON.stringify(preset));
   assert.equal(ctx.agentPresets.defaultId, 'standard');
   for (const dialect of ['bash', 'pwsh']) {
     const entries = [...ctx.loader.entries()].filter(entry => entry.options.id === `${dialect}-sandbox`);
@@ -37,8 +38,8 @@ async function run(ctx, permissionMode) {
 
   for (const id of ids) {
     const preset = await ctx.agentPresets.resolve(id);
-    assert.equal(resolve(preset.path), join(process.env.DSH_PORTABLE_ROOT,
-      'app', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', id, 'agent.cordis.yml'));
+    assert.equal(preset.id, id);
+    assert.equal(preset.broken, undefined, JSON.stringify(preset));
     const handle = await ctx.agents.create({
       sessionId: `portable-smoke-${randomUUID()}`,
       meta: { cwd: process.cwd(), agentPreset: id },

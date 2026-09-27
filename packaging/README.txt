@@ -5,6 +5,8 @@ Unofficial portable build of DeepSeek Harness (dsh).
 Not affiliated with DeepSeek. Bundles official Node.js + @deepseek-ai/dsh + pnpm
 + Git for Windows Portable.
 
+This packager supports dsh 0.1.7-alpha.2 or newer (declarative agent presets).
+
 Quick start
 -----------
 1. Unzip anywhere (prefer a short path, e.g. C:\dsh-portable).

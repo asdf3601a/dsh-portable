@@ -27,7 +27,7 @@ $GitExe = Join-Path $StageDir 'runtime\git\cmd\git.exe'
 $BashExe = Join-Path $StageDir 'runtime\git\usr\bin\bash.exe'
 $ShellOverlay = Join-Path $StageDir 'runtime\portable\shell.cordis.yml'
 $ArgvPreload = Join-Path $StageDir 'runtime\portable\argv.cjs'
-$BundledPresets = Join-Path $StageDir 'app\node_modules\@deepseek-ai\dsh-agent-presets\presets'
+$BundledPresets = Join-Path $StageDir 'app\node_modules\@deepseek-ai\dsh-web-app\presets'
 
 Write-Host "==> smoke: $StageDir"
 
@@ -40,7 +40,7 @@ if (-not (Test-Path $BashExe)) { throw "missing bundled Git Bash (usr\bin\bash.e
 if (-not (Test-Path $ShellOverlay)) { throw "missing shell overlay: $ShellOverlay" }
 if (-not (Test-Path $ArgvPreload)) { throw "missing argument preload: $ArgvPreload" }
 if (Test-Path (Join-Path $StageDir 'runtime\portable\presets')) { throw 'portable must not ship additional presets' }
-if ((Get-Content -LiteralPath $ShellOverlay -Raw) -match 'agent-presets') {
+if ((Get-Content -LiteralPath $ShellOverlay -Raw) -match 'dsh-agent-preset') {
   throw 'shell overlay must not replace the upstream preset roster or default'
 }
 
@@ -211,11 +211,28 @@ if ($BashOut -ne 'DSH_OK') { throw "bundled bash -c returned '$BashOut'" }
 Write-Host '    DSH_OK'
 
 foreach ($preset in @('standard', 'cordis', 'ptc', 'minimal')) {
-  $PresetText = Get-Content -LiteralPath (Join-Path $BundledPresets "$preset\agent.cordis.yml") -Raw
+  $PresetText = Get-Content -LiteralPath (Join-Path $BundledPresets "$preset.patch.yml") -Raw
   if ($PresetText -notmatch "process\.env\.DSH_SHELL !== 'bash'" -or
       $PresetText -notmatch "process\.env\.DSH_SHELL === 'bash'" -or
       $PresetText -match 'disabled: !!js process\.platform') {
     throw "$preset must gate its shell plugins on DSH_SHELL"
+  }
+}
+
+# Declarative presets also contain DSH_SHELL in default dumps. Only the host
+# sandbox rows tell us whether the launcher's portable overlay was applied.
+function Assert-ShellOverlay([string]$ConfigText, [bool]$Expected = $true) {
+  foreach ($shell in @('bash', 'pwsh')) {
+    $condition = if ($Expected) {
+      if ($shell -eq 'bash') { "process.env.DSH_SHELL !== 'bash'" } else { "process.env.DSH_SHELL === 'bash'" }
+    } else {
+      if ($shell -eq 'bash') { "process.platform === 'win32'" } else { "process.platform !== 'win32'" }
+    }
+    $pattern = '(?m)^- id: ' + $shell + '-sandbox\r?\n[ \t]+name: ''@deepseek-ai/dsh-' +
+      $shell + '-sandbox''\r?\n[ \t]+disabled: !!js ' + [regex]::Escape($condition) + '\r?$'
+    if ([regex]::Matches($ConfigText, $pattern).Count -ne 1) {
+      throw "$shell host sandbox must use $condition (portable overlay expected: $Expected)"
+    }
   }
 }
 
@@ -236,9 +253,7 @@ if ($DumpNormalized -like "*$HomeNeedle*") {
 }
 Write-Host "    expected DSH_HOME=$ExpectedHome"
 $DumpText = ($Dump | Out-String)
-if ($DumpText -notmatch 'DSH_SHELL') {
-  throw 'dsh web --dump-config must include the portable shell overlay'
-}
+Assert-ShellOverlay $DumpText
 
 foreach ($probe in @(
   @{ Label = '--profile web --dump-config'; Args = '--profile web --dump-config'; Overlay = $true },
@@ -252,10 +267,7 @@ foreach ($probe in @(
     Write-Host ($ProbeOut | Out-String)
     throw "dsh $($probe.Label) failed with exit code $LASTEXITCODE"
   }
-  $HasOverlay = ($ProbeOut | Out-String) -match 'DSH_SHELL'
-  if ($HasOverlay -ne $probe.Overlay) {
-    throw "dsh $($probe.Label) overlay=$HasOverlay, expected $($probe.Overlay)"
-  }
+  Assert-ShellOverlay ($ProbeOut | Out-String) $probe.Overlay
 }
 
 Write-Host '==> dsh plugin --profile web --version'
@@ -337,9 +349,7 @@ try {
     throw "dsh web --dump-config with SHELL=bash failed with exit code $LASTEXITCODE"
   }
   $DumpBashText = ($DumpBash | Out-String)
-  if ($DumpBashText -notmatch 'DSH_SHELL') {
-    throw 'SHELL=bash dump-config must still include the portable shell overlay'
-  }
+  Assert-ShellOverlay $DumpBashText
 
   $GeneratedNpmrc = Join-Path $StageDir 'data\cache\generated.npmrc'
   if (Test-Path -LiteralPath $GeneratedNpmrc) { Remove-Item -LiteralPath $GeneratedNpmrc -Force }

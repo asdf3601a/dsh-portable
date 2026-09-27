@@ -119,20 +119,23 @@ Native modules are installed on `windows-latest` so the tree is win32-x64.
 
 ## Releases follow upstream
 
-Every Wednesday, GitHub Actions here builds a portable ZIP for the **latest** `dsh-v*` GitHub Release on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (e.g. `dsh-v0.1.2-alpha.1` / title `v0.1.2-alpha.1`) — **no need to wait for npm**. Older unpublished tags are not backfilled.
+Every Wednesday, GitHub Actions here builds a portable ZIP for the **latest** `dsh-v*` GitHub Release on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (e.g. `dsh-v0.1.7-alpha.2` / title `v0.1.7-alpha.2`) — **no need to wait for npm**. Older unpublished tags are not backfilled.
+
+The packager supports dsh **0.1.7-alpha.2 or newer**, using declarative presets from
+`@deepseek-ai/dsh-web-app`. Older file-based presets are no longer supported.
 
 If `@deepseek-ai/dsh@<ver>` is on the registry, the build uses it; otherwise it clones the Git tag, runs `pnpm run build:official` + official `release:pack` (dsh + vendor), then installs the packed tarballs into `app/`.
 
-Manual: Actions → **watch-upstream** (latest only) or **release** → Run workflow → set `dsh_version` (e.g. `0.1.2-alpha.1`) for a specific version.
+Manual: Actions → **watch-upstream** (latest only) or **release** → Run workflow → set `dsh_version` (e.g. `0.1.7-alpha.2`) for a specific version.
 
 ## Build locally (Windows)
 
 ```powershell
 # Force git-tag pack (needed when the version is not on npm yet)
-powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -DshVersion 0.1.2-alpha.1 -Source git
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -DshVersion 0.1.7-alpha.2 -Source git
 
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke-windows.ps1 `
-  -StageDir .\build\win-x64\dsh-portable -ExpectedDshVersion 0.1.2-alpha.1
+  -StageDir .\build\win-x64\dsh-portable -ExpectedDshVersion 0.1.7-alpha.2
 ```
 
 Artifacts land in `dist\`. The git-pack path requires **git** on PATH.

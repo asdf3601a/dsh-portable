@@ -19,6 +19,10 @@ jobs:
         shell: pwsh
         run: ./scripts/test-resolve-upstream.ps1
 
+      - name: Test bundled preset shell patching
+        shell: pwsh
+        run: ./scripts/test-bundled-presets.ps1
+
       - name: Resolve dsh version (latest upstream dsh-v* / fallback)
         id: ver
         shell: pwsh
